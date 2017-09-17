@@ -27,30 +27,18 @@ def job_get_app(spider, categories):
 if __name__ == "__main__":
     logger()
     spider = Spider()    
+    spider.revert_category_fetched()
     # 获取还没有抓取过app的分类 
     categories = spider.get_unfetched_category()
     
     length = len(categories)
-    start = 0
-    threads = []
-    THREADNUM = 10
-
-   
-    while start < length:
-        if length - start < THREADNUM: 
-            tmp_categories = categories[start:]
-        else:
-            tmp_categories = categories[start:start+THREADNUM]
-        
-        start += THREADNUM
-        t = threading.Thread(target=job_get_app, args=(spider, tmp_categories ))
-        threads.append(t)
-    
-    for t in threads: 
-        t.start()
-    
-    for t in threads:
-        t.join()
+    for category in categories:
+        url = category[2] 
+        # 开始抓取每个分类的热门app
+        spider.getapps(url, category[0])
+        logging.info('fetched {}'.format(category[0]))
+        spider.update_category_fetched(category[0])
+  
     
     print('finished')
 
