@@ -72,7 +72,7 @@ class Spider(object):
             self.cursor.execute(insertnewappsql, (datenow, newuser))
         if newcomment > 0:
             insertnewappsql = """insert into stat_newfetched (date, new_comment_num) 
-                                 values(%s, %s) on duplicate key update new_comment_num =new_user_num+values(new_comment_num) """
+                                 values(%s, %s) on duplicate key update new_comment_num =new_comment_num+values(new_comment_num) """
             self.cursor.execute(insertnewappsql, (datenow, newcomment))
         if newapp > 0 or newuser>0 or newcomment >0:
             self.db.commit()
@@ -165,7 +165,7 @@ class Spider(object):
         self.cursor.execute(sql)
         count = self.cursor.fetchone()
         return count[0]
-    
+
     
  
     def create_appinfo(self): 
@@ -175,6 +175,10 @@ class Spider(object):
            comment_updated ： 最新评论的日期
            counter: 评论总数
            free: true,表示是免费app，false代表付费app
+           oldcounter: 记录首次抓取时抓取的数量
+           activefactor: app的活动因子，首次抓取时抓取的评论数量为500的，activefactor标记为1，
+                         以后每天抓取的评论数量来更新这个活动因子，来表明这个app的活跃度
+
         """
         sql = """create table if not exists appinfo(
             id int(32) not null, 
@@ -188,6 +192,8 @@ class Spider(object):
             fetched boolean default 0,
             comment_updated datetime, 
             counter int default 0,
+            oldcounter int,
+            activefactor int default 0,
             free boolean, 
             primary key(id)
             ) engine=InnoDB ;"""
@@ -210,6 +216,7 @@ class Spider(object):
         sql = """update category set fetched=0"""
         self.cursor.execute(sql)
         self.db.commit()
+    
     def get_unfetched_category(self): 
         """修改类别信息表，标记指定类别的app信息已获取完毕"""
         sql = """select id, name, url from category where fetched = 0"""
@@ -388,4 +395,5 @@ class SpiderRunTest(SpiderRun):
 if __name__=="__main__":
     spider = SpiderRun()
     spider.get_daily_hot_apps()
+    spider.re_fetch_all_category_apps()
     spider.close()

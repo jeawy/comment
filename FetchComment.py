@@ -8,6 +8,7 @@ import MySQLdb
 import re
 import time
 import threading
+from datetime import datetime
 
 import logging
 from applespider import Spider
@@ -18,13 +19,13 @@ logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S',
 class FetchComment(object):
     """"""
     COUNT = 20
-    def __init__(self, appid):
+    def __init__(self ):
         #db = MySQLdb.connect(host="127.0.0.1",user="root",passwd="sqlroot",db="Comment",charset="utf8mb4") 
         db = MySQLdb.connect(host="192.168.1.103",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
         self.db = db
         self.cursor = self.db.cursor()
-        self.appid = appid #414478124 
+       
 
         userid_patter_str = '\d{5,}' #提取用户id的正则表达式
         self.userid_patter = re.compile(userid_patter_str)
@@ -50,7 +51,8 @@ class FetchComment(object):
             contenthtml text,
             content text,  
             merged boolean default 0,
-            PRIMARY KEY(id) 
+            PRIMARY KEY(id) ,
+            UNIQUE (userid, updated)
         )ENGINE=InnoDB auto_increment=1 DEFAULT CHARSET=utf8mb4;""".format(appid)
         self.cursor.execute(createsql)
         self.db.commit()
@@ -86,6 +88,12 @@ class FetchComment(object):
         self.cursor.execute(createsql)
         self.db.commit()
 
+    def revert_appinfo_fetched(self): 
+        """将所有app设置成为未抓取状态，以便每天定时重新抓取"""
+        sql = """update appinfo set fetched=0"""
+        self.cursor.execute(sql)
+        self.db.commit()
+
     def insert_appleuser_tb(self, appleuserid, username):
         """向苹果用户表中插入用户数据，如果用户id已存在，则不插入"""
        
@@ -110,13 +118,12 @@ class FetchComment(object):
         try: 
             self.cursor.executemany(insertsql, users)
             self.db.commit()
-        except MySQLdb.Error as e:
-            pdb.set_trace()
+        except MySQLdb.Error as e: 
             #self.db.rollback() 
             print ('user:{0} exist already.'.format(str(e)))
         
       
-    def insert_comment_tb(self,  **kwargs):
+    def insert_comment_tb(self,appid,  **kwargs):
         """向每个app的评论是单独分开的，本函数是为某个app的comment表中插入数据"""
        
         insertsql = """insert ignore into t%s( userid, name, updated, title, rating, version, votesum, votecount,contenthtml, content) 
@@ -127,21 +134,21 @@ class FetchComment(object):
  
         try:
             if 'version' in kwargs:
-                self.cursor.execute(insertsql, (self.appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
+                self.cursor.execute(insertsql, (appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
                                            kwargs['title'], kwargs['rating'], kwargs['version'], kwargs['voteSum'],
                                            kwargs['voteCount'], kwargs['contenthtml'], kwargs['content']))
                 
                 # 插入总comment表
-                self.cursor.execute(insertcommentsql, (self.appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
+                self.cursor.execute(insertcommentsql, (appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
                                            kwargs['title'], kwargs['rating'], kwargs['version'], kwargs['voteSum'],
                                            kwargs['voteCount'],  kwargs['content']))
             else: 
-                self.cursor.execute(insertsql, (self.appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
+                self.cursor.execute(insertsql, (appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
                                            kwargs['title'], kwargs['rating'], '-1', kwargs['voteSum'],
                                            kwargs['voteCount'], kwargs['contenthtml'], kwargs['content']))
                 
                 # 插入总comment表
-                self.cursor.execute(insertcommentsql, (self.appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
+                self.cursor.execute(insertcommentsql, (appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
                                            kwargs['title'], kwargs['rating'], kwargs['version'], kwargs['voteSum'],
                                            kwargs['voteCount'],   kwargs['content']))
         except MySQLdb.Error as e:
@@ -161,7 +168,7 @@ class FetchComment(object):
         """向每个app的评论是单独分开的，本函数是为某个app的comment表中插入数据"""
        
          
-        inserttotalsql = """insert  into comment(appid, userid, name, updated, title, 
+        inserttotalsql = """insert ignore  into comment(appid, userid, name, updated, title, 
                             rating, version, votesum, votecount, content ) 
                             values (%s, %s,%s,%s,%s, %s,%s,%s,%s,%s)"""
 
@@ -170,10 +177,10 @@ class FetchComment(object):
                        values (%s,%s,%s, %s,%s, %s,%s,%s,%s, %s)""".format(appid)
 
         try: 
-            #start = time.ctime()
+            #start = time.ctime() 
             self.cursor.executemany(inserttotalsql, comments) 
             self.cursor.executemany(insertsql, comments_t) 
-            self.db.commit()
+            self.db.commit() 
             #print('commit:',start)
             #print('commit:',time.ctime())
         except MySQLdb.Error as e:
@@ -191,181 +198,90 @@ class FetchComment(object):
         updatesql = 'update appinfo set counter= counter + '+str(counter) + ' where id ='+ str(appid) +';'
         self.cursor.execute(updatesql)
         self.db.commit()
-
-
-    def init_read(self, appid):
-        """首次抓取，抓取最多的记录"""
-        
-        templateurl = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=en&&cc=cn'
-        ns = {
-            'replace_w3org' : '{http://www.w3.org/2005/Atom}',
-            'replace_apple': '{http://itunes.apple.com/rss}' 
-        }
+    
+    def merge(self):
+        """
+        把各个APP分表中的comment集中在一个comment表中。
+        算法：
+        1 通过appinfo表查找所有app的comment表
+        2 遍历所有表，每一次用executemany来将分表插入总表， 并对appinfo表中的数据进行标记
+        3
+        """
+        insertsql = "insert into comment (appid, userid, name,  updated, title, rating, version,  votesum, votecount, content) values ( %s, %s,%s,%s,%s, %s, %s,%s,%s,%s); "
+        timestart = time.ctime()
+        apps = self.get_unmerged_app() 
         count = 0
-        items = [] # comment记录
-        items_t = [] # t23893238239记录
-        users = [] # 评论用户
-        entry_count = 0
-        comment_updated = '' #最新评论时间
+        for app in apps:
+            # 开始merge
+            # 
+            comments = self.get_comments_app(app[0])
+            length = len(comments)
+            if length > 0:
+                try:
+                    self.cursor.executemany(insertsql, comments )
+                    self.db.commit()
+                    self.update_appinfo_merged(length, app[0])
+                    count += length
+                    print ('total:', count, app[0], 'merged')
+                except Exception as e: 
+                    self.db.rollback()
 
-        start = time.ctime()
-        for pagei in list(reversed(range(1, 11))):
-            url = templateurl.format(pagei, appid)
-            
-            results_xml = requests.get(url)
-            results_text = results_xml.content.decode('utf-8', 'ignore')
-            
-            try:
-                root = ET.fromstring(results_text )
-               
-            except ET.ParseError:
-                continue # xml文件本身有问题
+        print('finished')
+        print('Start from :', timestart)
+        print('End        :', time.ctime())
 
-            userid = ''
-            authorname = ''
-            updated = ''
-            title = ''
-            content = ''
-            rating = ''
-            voteSum = ''
-            voteCount = ''
-            version = ''
-            
-            for entries in root.iter(ns['replace_w3org']+'entry'): 
-                itementry = {} 
-                user = {} 
-                 
-                for entry in  entries:  
-                    tag = entry.tag.replace(ns['replace_apple'],'')
-                    tag = tag.replace(ns['replace_w3org'],'')
-                    
-                    if tag == 'id' :
-                        match = self.userid_patter.match(entry.text)
-                        if match: 
-                            userid = match.group() 
-                            itementry['userid'] = userid # 用户id
-                            user['userid'] = userid
-                        else:  
-                            break # 非用户评论
-                    if tag =='author':  
-                        for name in entry.iter(ns['replace_w3org']+'name'):
-                            authorname = name.text
-                            itementry['name'] = authorname # 用户名
-                            user['name'] = authorname
-                              
-                    if tag =='updated':
-                        updated = entry.text[:19].replace('T', ' ')
-                        itementry['updated'] = updated # 用户评论日期
-                        comment_updated = updated
 
-                    if tag =='title': # 用户评论标题
-                        title = entry.text  
-                        itementry['title'] = title.encode().decode('utf8', 'ignore') 
-                    
-                    if tag =='content':   # 评论内容
-                        content = entry.text
-                        if entry.attrib['type']=='html':
-                            # 保存HTML版本的content用于阅读
-                            itementry['contenthtml'] = content  
-                        else:
-                            # 保存纯文本版本的content用于分析
-                            itementry['content'] = content 
-
-                    if  tag=='rating':  # 评分
-                        rating = entry.text
-                        itementry['rating'] = rating 
-                    
-                    if  tag=='voteSum': 
-                        voteSum = entry.text
-                        itementry['voteSum'] = voteSum # 不知道是什么
-
-                    if  tag=='voteCount': 
-                        voteCount = entry.text
-                        itementry['voteCount'] = voteCount # 不知道是什么
-
-                    if  tag=='version': 
-                        version = entry.text
-                        itementry['version'] = version # 应用版本
-                      
-                # 将apple用户+新提取的评论插入数据库
-                if userid and authorname:
-                    count += 1 # count 为实际抓取的数量 
-                    if 'version' not in itementry:
-                        itementry['version'] = '-1'
-
-                    items.append((appid, itementry['userid'], itementry['name'] ,itementry['updated'] ,
-                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
-                    itementry['content']   ))
-
-                    items_t.append((itementry['userid'], itementry['name'] ,itementry['updated'] ,
-                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
-                    itementry['contenthtml'], itementry['content']   ))
-
-                    users.append((user['userid'], user['name']))
-                    #print(itementry['updated'],count, itementry['title'])
-                     
-                    
-                    #数据为一条一条插入方式
-                    #print(count, itementry['title'], itementry['updated']) 
-                    #self.insert_appleuser_tb(userid, authorname)
-                    #self.insert_comment_tb(**item)
+    def get_comments_app(self, appid):
+        """
+        获取appid指定的t{appid},如t122632344表中所有comment，并以元祖的方式返回
+        """ 
+        timestart = time.ctime()
+        sql = 'select  userid, name, updated,  title, rating, version, votesum,  votecount, content from t'+str(appid) + ';'
+        self.cursor.execute(sql)
+        comments = self.cursor.fetchall()
+        comments_list = []
+        for comment in comments: 
+            tmp = list(comment)
+            tmp.insert(0, appid)  
+            comments_list.append(tuple(tmp))
+        print('Start from :', timestart)
+        print('End        :', time.ctime()) 
+      
+        return comments_list
         
-        #print('fetched:',start)
-        #print('fetched:',time.ctime())   
-        # 数据已全部抓取完毕，更新appinof表的counter字段 
-        if count > 0:   
-            self.insertmany_appleuser_tb(users)
-            self.insertmany_comment_tb(appid, items, items_t)
-            self.add_comment_couter(count, appid) 
-            self.update_appin_fetched(appid, comment_updated)
-            print(appid, count)
-        else:
-            self.update_appin_fetched(appid)
-            
-
-    def get_appinfo_internet(self):
-        """从api中获取appinfo的icon、content和artist数据"""
-        
-        templateurl = 'https://itunes.apple.com/rss/customerreviews/page=1/id={0}/sortby=mostrecent/xml?l=en'
-        ns = {
-            'replace_w3org' : '{http://www.w3.org/2005/Atom}',
-            'replace_apple': '{http://itunes.apple.com/rss}' 
-        } 
+    def get_app_comment_updated(self, appid):
+        """
+        获取appid指定的comment_updated日期
+        """ 
  
-        url = templateurl.format(self.appid) 
-        results_xml = requests.get(url) 
-        results_text = results_xml.content.decode('utf-8', 'ignore') 
-        
-        try:
-            root = ET.fromstring(results_text )
-        except ET.ParseError :
-            results_xml = requests.get(url.replace('&&cc=cn','')) 
-            results_text = results_xml.content.decode('utf-8', 'ignore') 
-            root = ET.fromstring(results_text )
+        sql = 'select  id, comment_updated from appinfo   where id='+str(appid) + ';'
+        self.cursor.execute(sql)
+        appinfo = self.cursor.fetchone() 
+        return appinfo
+ 
+      
+        return comments_list
+    def get_unmerged_app(self): 
+        """
+        获取所有未merged的app
+        """
+        sql = """select id from appinfo where merged = 0"""
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall()
+        return apps
 
-        itementry = {}     
-        for entries in root.iter(ns['replace_w3org']+'entry'):  
-            for entry in  entries:  
-                tag = entry.tag.replace(ns['replace_apple'],'')
-                tag = tag.replace(ns['replace_w3org'],'')
-            
-                if tag =='content':  
-                    content = entry.text
-                    itementry['content'] = content 
+    def update_appinfo_merged(self, counter, appid): 
+        """
+        更新app，merged=1， 表示已经merge完了
+        """
+        sql = """update  appinfo set merged = 1, counter={0} where id = {1}""".format(counter, appid) 
+        self.cursor.execute(sql)
+        self.db.commit()
 
-                if  tag=='artist':  # artist
-                    artist = entry.text
-                    itementry['artist'] = artist 
-              
-                if  tag=='image' and entry.attrib['height']=='100': 
-                    icon100 = entry.text
-                    itementry['icon100'] = icon100  
-            break 
-
-        return itementry
+    
         
 
-    def read_everyday(self):
+    def read_everyday(self, appid):
         """
             每天都抓取，碰到日期小于昨天的记录就停止抓取
             # appinfo表中会记录最新一条评论的时间
@@ -375,7 +291,7 @@ class FetchComment(object):
         replace_apple = '{http://itunes.apple.com/rss}' 
         count = 0
         for pagei in range(1, 10):
-            url = url.format(pagei, self.appid)
+            url = url.format(pagei, appid)
             results_xml = requests.get(url)
             results_text = results_xml.content
             root = ET.fromstring(results_text)
@@ -408,7 +324,7 @@ class FetchComment(object):
     def update_appin_fetched(self, appid, comment_updated=''): 
         """
         更新app，fetch=1， 表示已经抓取完了
-        """
+        """ 
         if len(comment_updated) > 0:
             sql = """update  appinfo set fetched = 1, comment_updated="{0}" where id = {1}""".format( comment_updated, appid) 
         else:
@@ -424,6 +340,76 @@ class FetchComment(object):
         sql = """update  appinfo set description = %s,  seller=%s, icon100=%s where id = {0}""".format( appid)  
         self.cursor.execute(sql, (appinfo['content'], appinfo['artist'], appinfo['icon100']))
         self.db.commit()
+
+          
+    
+
+    def get_all_appin(self): 
+        """获取所有appid"""
+        sql = """select id  from appinfo"""
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall() 
+        return apps
+     
+class FetchJob(FetchComment):
+    """
+    这个类主要用来运行一些job，如：抓取
+    """
+    def __init__(self):
+        super(FetchJob, self).__init__()
+
+    def delall_comment_tb(self):
+        return 
+        apps = self.get_all_appin()
+        for app in apps:
+            try:
+                sql = 'drop table t{}'.format(app[0])
+                self.cursor.execute(sql)
+                self.db.commit()
+                print(app[0], 'deleted')
+            except MySQLdb.Error as e:
+                logging.error(e) 
+
+    def get_appinfo_internet(self, appid ):
+        """从api中获取appinfo的icon、content和artist数据"""
+        
+        templateurl = 'https://itunes.apple.com/rss/customerreviews/page=1/id={0}/sortby=mostrecent/xml?l=en'
+        ns = {
+            'replace_w3org' : '{http://www.w3.org/2005/Atom}',
+            'replace_apple': '{http://itunes.apple.com/rss}' 
+        } 
+ 
+        url = templateurl.format(appid) 
+        results_xml = requests.get(url) 
+        results_text = results_xml.content.decode('utf-8', 'ignore') 
+        
+        try:
+            root = ET.fromstring(results_text )
+        except ET.ParseError :
+            results_xml = requests.get(url.replace('&&cc=cn','')) 
+            results_text = results_xml.content.decode('utf-8', 'ignore') 
+            root = ET.fromstring(results_text )
+
+        itementry = {}     
+        for entries in root.iter(ns['replace_w3org']+'entry'):  
+            for entry in  entries:  
+                tag = entry.tag.replace(ns['replace_apple'],'')
+                tag = tag.replace(ns['replace_w3org'],'')
+            
+                if tag =='content':  
+                    content = entry.text
+                    itementry['content'] = content 
+
+                if  tag=='artist':  # artist
+                    artist = entry.text
+                    itementry['artist'] = artist 
+              
+                if  tag=='image' and entry.attrib['height']=='100': 
+                    icon100 = entry.text
+                    itementry['icon100'] = icon100  
+            break 
+
+        return itementry
 
     def run(self, num=0):
         """
@@ -456,13 +442,13 @@ class FetchComment(object):
         appids = self.get_unfetch_detail_appin()
        
         for appid in appids:
-            self.appid = appid[0] 
+            appid = appid[0] 
             infos = self.get_appinfo_internet()
             if infos:
-                self.update_appin_basic(self.appid, infos) 
-                print(self.appid, appid[1], 'updated')
+                self.update_appin_basic(appid, infos) 
+                print(appid, appid[1], 'updated')
 
-    def run_everyday(self, num):
+    def run_everyday(self, appid, num):
         """
         运行本函数可以每天来抓取新的评论，并且不重新创建表
         """
@@ -471,115 +457,235 @@ class FetchComment(object):
             self.create_tb() # 1 创建app的comment表
             self.init_read()
             self.update_appin_fetched(appid[0])
-            print(self.appid, appid[1], 'comment fetched')         
-    
+            print(appid, appid[1], 'comment fetched')   
 
-    def get_all_appin(self): 
-        """获取所有appid"""
-        sql = """select id  from appinfo"""
-        self.cursor.execute(sql)
-        apps = self.cursor.fetchall() 
-        return apps
-     
-class FetchJob(FetchComment):
-    """
-    这个类主要用来运行一些job，如：抓取
-    """
-    def __init__(self, appid):
-        super(FetchJob, self).__init__(appid)
+    def init_read(self, appid, lastcomment_updated=None):
+        """
+        抓取某个app的评论
+        lastcomment_updated 为app上次抓取到最新评论的时间,如果是首次抓取时，或者之前没有抓取到评论时，该值为None
+        """
+        
+        templateurl = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=en&&cc=cn'
+        ns = {
+            'replace_w3org' : '{http://www.w3.org/2005/Atom}',
+            'replace_apple': '{http://itunes.apple.com/rss}' 
+        }
+        count = 0
+        items = [] # comment记录
+        items_t = [] # t23893238239记录
+        users = [] # 评论用户
+        
+        comment_updated = '' #最新评论时间
 
-    def delall_comment_tb(self):
-        apps = self.get_all_appin()
-        for app in apps:
+        start = time.ctime()
+        breakmark = False
+
+        for pagei in range(1, 11):
+
+            if breakmark: # 已经取完最新的数据了，结束for循环
+                break
+            url = templateurl.format(pagei, appid)
+            
+            results_xml = requests.get(url)
+            results_text = results_xml.content.decode('utf-8', 'ignore')
+            
             try:
-                sql = 'drop table t{}'.format(app[0])
-                self.cursor.execute(sql)
-                self.db.commit()
-                print(app[0], 'deleted')
-            except MySQLdb.Error as e:
-                logging.error(e) 
- 
-    def merge(self):
-        """
-        把各个APP分表中的comment集中在一个comment表中。
-        算法：
-        1 通过appinfo表查找所有app的comment表
-        2 遍历所有表，每一次用executemany来将分表插入总表， 并对appinfo表中的数据进行标记
-        3
-        """
-        insertsql = "insert into comment (appid, userid, name,  updated, title, rating, version,  votesum, votecount, content) values ( %s, %s,%s,%s,%s, %s, %s,%s,%s,%s); "
-        timestart = time.ctime()
-        apps = self.get_unmerged_app() 
+                root = ET.fromstring(results_text )
+               
+            except ET.ParseError:
+                continue # xml文件本身有问题
+
+            userid = ''
+            authorname = ''
+            updated = ''
+            title = ''
+            content = ''
+            rating = ''
+            voteSum = ''
+            voteCount = ''
+            version = ''
+            entry_count = 0
+            for entries in root.iter(ns['replace_w3org']+'entry'): 
+
+                if breakmark:
+                    break
+                entry_count += 1
+                if entry_count ==1:
+                    continue # 第一个entry是app信息 跳过
+
+                itementry = {} 
+                user = {}  
+                 
+                for entry in  entries:  
+                    tag = entry.tag.replace(ns['replace_apple'],'')
+                    tag = tag.replace(ns['replace_w3org'],'')
+                    
+                    if tag == 'id' :
+                        match = self.userid_patter.match(entry.text)
+                        if match: 
+                            userid = match.group() 
+                            itementry['userid'] = userid # 用户id
+                            user['userid'] = userid
+                        else:  
+                            break # 非用户评论
+                    if tag =='author':  
+                        for name in entry.iter(ns['replace_w3org']+'name'):
+                            authorname = name.text
+                            itementry['name'] = authorname # 用户名
+                            user['name'] = authorname
+                              
+                    if tag =='updated':
+                        updated = entry.text[:19].replace('T', ' ')
+                        itementry['updated'] = updated # 用户评论日期
+                        if pagei == 1 and entry_count == 2: # page为第一页的第二个entry就是最新的
+                            comment_updated = updated
+
+                        #datetime.strptime('1993-12-09 18:55:44', '%Y-%m-%d %H:%M:%S')
+                        if lastcomment_updated: # 
+                            # 当lastcomment_updated不为None的时候，代表执行的是每日的例行抓取工作
+                            # 而不是新来的app进行抓取，注意的是，如果以前抓取的时候，未抓取到任何
+                            # 评论数据时，lastcomment_updated也是为空的
+                            # updatedtime = datetime.strptime('1993-12-09 18:55:44', '%Y-%m-%d %H:%M:%S')
+                            updatedtime = datetime.strptime(updated, '%Y-%m-%d %H:%M:%S')
+                            
+                            if updatedtime == lastcomment_updated: # 代表取到了上次抓取时抓取的最后一条评论了
+                                breakmark = True # 停止所有循环 
+                                break
+                            elif updatedtime < lastcomment_updated:
+                                breakmark = True # 停止所有循环
+                                break
+
+                    if tag =='title': # 用户评论标题
+                        title = entry.text  
+                        itementry['title'] = title.encode().decode('utf8', 'ignore') 
+                    
+                    if tag =='content':   # 评论内容
+                        content = entry.text
+                        if entry.attrib['type']=='html':
+                            # 保存HTML版本的content用于阅读
+                            itementry['contenthtml'] = content  
+                        else:
+                            # 保存纯文本版本的content用于分析
+                            itementry['content'] = content 
+
+                    if  tag=='rating':  # 评分
+                        rating = entry.text
+                        itementry['rating'] = rating 
+                    
+                    if  tag=='voteSum': 
+                        voteSum = entry.text
+                        itementry['voteSum'] = voteSum # 不知道是什么
+
+                    if  tag=='voteCount': 
+                        voteCount = entry.text
+                        itementry['voteCount'] = voteCount # 不知道是什么
+
+                    if  tag=='version': 
+                        version = entry.text
+                        itementry['version'] = version # 应用版本
+                      
+                # 将apple用户+新提取的评论插入数据库
+                if userid and authorname and not breakmark:
+                    count += 1 # count 为实际抓取的数量 
+                    if 'version' not in itementry:
+                        itementry['version'] = '-1'
+
+                    items.append((appid, itementry['userid'], itementry['name'] ,itementry['updated'] ,
+                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
+                    itementry['content']   ))
+
+                    items_t.append((itementry['userid'], itementry['name'] ,itementry['updated'] ,
+                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
+                    itementry['contenthtml'], itementry['content']   ))
+
+                    users.append((user['userid'], user['name']))
+                    #print(itementry['updated'],count, itementry['title'])
+                     
+                    
+                    #数据为一条一条插入方式
+                    #print(count, itementry['title'], itementry['updated']) 
+                    #self.insert_appleuser_tb(userid, authorname)
+                    #self.insert_comment_tb(appid, **item)
+        
+        #print('fetched:',start)
+        #print('fetched:',time.ctime())   
+        # 数据已全部抓取完毕，更新appinof表的counter字段 
+        if count > 0:   
+            self.insertmany_appleuser_tb(users)
+            self.insertmany_comment_tb(appid, items, items_t)
+            self.add_comment_couter(count, appid) 
+            self.update_appin_fetched(appid, comment_updated)
+            print(appid, count)
+        else:
+            self.update_appin_fetched(appid)
+    def find_duplicates(self):
+        """查找所有有重复数据的table"""
+        apps = self.get_all_appin()
         count = 0
         for app in apps:
-            # 开始merge
-            # 
-            comments = self.get_comments_app(app[0])
-            length = len(comments)
-            if length > 0:
+            count += 1
+            sql = """select count(*) from t{} group by userid, updated having count(*) >1;""".format(app[0])
+            self.cursor.execute(sql)
+            counts = self.cursor.fetchall()
+            
+            if len(counts) > 0:
+                # 有重复数据
+                logging.info('Dup:'+str(app[0]))
+               
+            else:
+                addindexsql = """alter table t{0} drop index t{1}index , add unique index t{2}index (userid, updated)""".format(app[0], app[0], app[0])
                 try:
-                    self.cursor.executemany(insertsql, comments )
-                    self.db.commit()
-                    self.update_appinfo_merged(length, app[0])
-                    count += length
-                    print ('total:', count, app[0], 'merged')
-                except Exception as e:
-                    pdb.set_trace()
-                    self.db.rollback()
-
-        print('finished')
-        print('Start from :', timestart)
-        print('End        :', time.ctime())
+                    self.cursor.execute(addindexsql)
+                except MySQLdb.Error as e:
+                    logging.error(e)
+            print (count, app[0])
+             
 
 
-    def get_comments_app(self, appid):
-        """
-        获取appid指定的t{appid},如t122632344表中所有comment，并以元祖的方式返回
-        """ 
-        timestart = time.ctime()
-        sql = 'select  userid, name, updated,  title, rating, version, votesum,  votecount, content from t'+str(appid) + ';'
-        self.cursor.execute(sql)
-        comments = self.cursor.fetchall()
-        comments_list = []
-        for comment in comments: 
-            tmp = list(comment)
-            tmp.insert(0, appid)  
-            comments_list.append(tuple(tmp))
-        print('Start from :', timestart)
-        print('End        :', time.ctime()) 
-      
-        return comments_list
-        
-
-    def get_unmerged_app(self): 
-        """
-        获取所有未merged的app
-        """
-        sql = """select id from appinfo where merged = 0"""
-        self.cursor.execute(sql)
-        apps = self.cursor.fetchall()
-        return apps
-
-    def update_appinfo_merged(self, counter, appid): 
-        """
-        更新app，merged=1， 表示已经merge完了
-        """
-        sql = """update  appinfo set merged = 1, counter={0} where id = {1}""".format(counter, appid) 
-        self.cursor.execute(sql)
-        self.db.commit()
-    
 def job(apps):
-    f = FetchJob(1226396146)
+    f = FetchJob()
     f.runapps(apps)
     f.close()
     print(str(threading.current_thread())+'Done')
 
+def tmp():
+    
+
+    f = FetchJob()
+    #　测试抓取微信的数据
+
+    spider = Spider()
+    """ 
+    f.find_duplicates()
+    """
+    oldusercount = spider.count_all_appleusers()
+    oldcommentcount = spider.count_all_comments()
+
+    appinfo = f.get_app_comment_updated(299852753)
+    print(appinfo[0], appinfo[1])
+    if appinfo[1]:
+        
+        f.init_read(appinfo[0], appinfo[1])
+    else:
+        f.init_read(appinfo[0])
+ 
+    newcommentcount = spider.count_all_comments()
+    newusercount = spider.count_all_appleusers()
+    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                  newuser=newusercount-oldusercount)
+    spider.close()
+    
+    
+    f.close()
+
+
 if __name__ == "__main__":
     
-    f = FetchJob(1226396146)
+    f = FetchJob()
     #f.get_appinfo_internet()
     #f.run(40)
-    apps = f.get_unfetched_appin()
+ 
+    apps = f.get_unfetched_appin() 
     start = time.ctime()
     length = len(apps)
     step = int(length/4)
@@ -606,6 +712,6 @@ if __name__ == "__main__":
     spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
                                   newuser=newusercount-oldusercount)
  
-    print ('start:', start)
-    print('end   :', time.ctime())
+    print('start:', start)
+    print('end  :', time.ctime())
     f.close()
