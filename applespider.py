@@ -26,7 +26,7 @@ class Spider(object):
 
         self.subcategory_json = []
         self.subcategoryitem = {}
-        db = MySQLdb.connect(host="192.168.1.103",user="root",passwd="comment",db="comment",charset="utf8mb4") 
+        db = MySQLdb.connect(host="192.168.1.101",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect(host="localhost",user="root",passwd="sqlroot",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
         self.db = db
@@ -58,6 +58,24 @@ class Spider(object):
         ) engine=myisam"""
         self.cursor.execute(sql)
         self.db.commit()
+    
+    def create_title_tb(self):
+        """创建一个title表，记录app在不同时期使用的不同title名称"""
+        sql = """create table if not exists apptitle (
+                    id int(32) not null auto_increment,
+                    appid int,
+                    title varchar(100),
+                    updated date,
+                    primary key (id),
+                    unique key apptitleindex(appid, title)
+                ) engine=myisam auto_increment=1 default charset=utf8;
+              """
+        self.cursor.execute(sql)
+        self.db.commit()
+    
+    def create_trigger_title(self):
+        """创建trigger 在apptitle中，在更新title的时候触发 """
+        pass
 
     def insert_stat_newfetched(self, newapp=0, newuser=0, newcomment=0):
         """更新统计表stat_newfetched， 更新新的用户数量，app数量，评论数量"""
@@ -102,11 +120,12 @@ class Spider(object):
             
 
     def insert_appinfo(self, id, name, categoryid):
-        """在appinfo 中一条数据，只插入id和name"""
-        intsersql = """insert into appinfo (id, title, category)
-                      values (%s, %s, %s) """
+        """在appinfo 中一条数据，只插入id和name以及抓取的日期"""
+        datenow = datetime.today().date().strftime('%Y-%m-%d')
+        intsersql = """insert into appinfo (id, title, category, fetched_date  )
+                      values (%s, %s, %s, %s) """
         try:
-            self.cursor.execute(intsersql, (id, name, categoryid)) 
+            self.cursor.execute(intsersql, (id, name, categoryid,datenow)) 
         except UnicodeDecodeError as e:
             print(e, id)
         except MySQLdb.IntegrityError:
@@ -195,22 +214,19 @@ class Spider(object):
             oldcounter int,
             activefactor int default 0,
             free boolean, 
+            fetched_date date,
             primary key(id)
             ) engine=InnoDB ;"""
         self.cursor.execute(sql)
         self.db.commit()
     
-    def update_appinfo(self): 
-        """修改APP信息表"""
-        sql = """alter table appinfo add column updated datetime"""
-        self.cursor.execute(sql)
-        self.db.commit()
-    
+
     def update_category_fetched(self, id): 
         """修改类别信息表，标记指定类别的app信息已获取完毕"""
         sql = """update category set fetched=1 where id={}""".format(id)
         self.cursor.execute(sql)
         self.db.commit()
+
     def revert_category_fetched(self): 
         """将所有category设置成为未抓取状态，重新抓取"""
         sql = """update category set fetched=0"""

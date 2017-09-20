@@ -8,20 +8,28 @@ import MySQLdb
 import re
 import time
 import threading
+import random
+
 from datetime import datetime
 
 import logging
 from applespider import Spider
 
 logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='fetchdata.log', filemode='a+')
+                     filename='newapps.log', filemode='a+')
 
 class FetchComment(object):
     """"""
+    # 在(http://www.xicidaili.com/wt/)上面收集的ip用于测试
+    # 没有使用字典的原因是 因为字典中的键是唯一的 http 和https 只能存在一个 所以不建议使用字典
+    pro = ['221.214.214.144:53281', '113.77.240.236:9797', '221.7.49.209:53281', '61.135.217.7']  
+    #pro = ['139.129.166.68:3128', '59.59.146.69:53281', '180.168.179.193:8080', '122.72.32.88', '183.190.74.185']  
+    #pro =['111.155.116.203:8123', '123.121.68.220:9000']
+    
     COUNT = 20
     def __init__(self ):
         #db = MySQLdb.connect(host="127.0.0.1",user="root",passwd="sqlroot",db="Comment",charset="utf8mb4") 
-        db = MySQLdb.connect(host="192.168.1.103",user="root",passwd="comment",db="comment",charset="utf8mb4") 
+        db = MySQLdb.connect(host="192.168.1.101",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
         self.db = db
         self.cursor = self.db.cursor()
@@ -75,11 +83,14 @@ class FetchComment(object):
             content text,  
             PRIMARY KEY(id) ,
             UNIQUE KEY uniq_comment(updated, appid, userid)
-        )ENGINE=InnoDB auto_increment=1 DEFAULT CHARSET=utf8mb4;""" 
+        )ENGINE=myisam auto_increment=1 DEFAULT CHARSET=utf8mb4;""" 
         print(time.ctime())
         self.cursor.execute(createsql)
         self.db.commit()
         print(time.ctime())
+
+    
+
 
     def create_appleuser_tb(self):
         """如果评论用户表table不存在则创建，为每个app创建一个表，共9万多个表，因为有9万多个APP"""
@@ -309,7 +320,21 @@ class FetchComment(object):
     
     def get_unfetched_appin(self): 
         """获取还未抓取的appid"""
-        sql = """select id , title from appinfo where fetched = 0"""  
+        sql = """select id , comment_updated, title from appinfo where fetched = 0"""  
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall() 
+        return apps
+    
+    def get_appin_bysql(self, sql): 
+        """获取还未抓取的appid"""
+        sql = """select id , comment_updated, title from appinfo where """+sql  
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall() 
+        return apps
+    
+    def get_top_appin_bysql(self, sql): 
+        """从top_comment_app获取还未抓取的top appid"""
+        sql = """select appid, date, title from top_comment_app where """+sql  
         self.cursor.execute(sql)
         apps = self.cursor.fetchall() 
         return apps
@@ -332,6 +357,7 @@ class FetchComment(object):
      
         self.cursor.execute(sql)
         self.db.commit()
+    
 
     def update_appin_basic(self, appid, appinfo): 
         """
@@ -346,10 +372,34 @@ class FetchComment(object):
 
     def get_all_appin(self): 
         """获取所有appid"""
-        sql = """select id  from appinfo"""
+        sql = """select id, title  from appinfo"""
         self.cursor.execute(sql)
         apps = self.cursor.fetchall() 
         return apps
+
+    def get_new_appin(self): 
+        """获取所有appid"""
+        sql = """select id, title  from appinfo where counter = 0 and icon100 is null and fetched = 0"""
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall() 
+        return apps
+    
+    def recounter_allapps(self):
+        """重新计算每个app的counter"""
+        apps = self.get_all_appin()
+        count = 0
+        for app in apps: 
+            count += 1
+            try:
+                sqlcounter = "select count(*) from t"+str(app[0])+";"
+                self.cursor.execute(sqlcounter)
+                counter = self.cursor.fetchone()
+                updatesql = 'update  appinfo set counter = {0}, fetched = 1 where id = {1};'.format(counter[0], app[0])
+                self.cursor.execute(updatesql)
+                self.db.commit()
+            except MySQLdb.Error as e:
+                logging.error(e)
+            print (count, app[0], counter[0], 'DONE')
      
 class FetchJob(FetchComment):
     """
@@ -422,7 +472,10 @@ class FetchJob(FetchComment):
 
         for appid in appids: 
             self.create_tb(appid[0]) # 1 创建app的comment表
-            self.init_read(appid[0])
+            if appid[1]:
+                self.init_read(appid[0], appid[1])
+            else:
+                self.init_read(appid[0])
             
             print(appid[0], appid[1], 'comment fetched')
     
@@ -432,8 +485,11 @@ class FetchJob(FetchComment):
         """ 
         for appid in apps: 
             self.create_tb(appid[0]) # 1 创建app的comment表
-            self.init_read(appid[0]) 
-            print(appid[0], appid[1], 'comment fetched')
+            if appid[1]:
+                self.init_read(appid[0], appid[1])
+            else:
+                self.init_read(appid[0])
+            print(appid[0], appid[2], 'comment fetched')
 
     def runfetch(self):
         """
@@ -448,16 +504,7 @@ class FetchJob(FetchComment):
                 self.update_appin_basic(appid, infos) 
                 print(appid, appid[1], 'updated')
 
-    def run_everyday(self, appid, num):
-        """
-        运行本函数可以每天来抓取新的评论，并且不重新创建表
-        """
-        appids = self.get_unfetched_appin()
-        for appid in appids[:num]: 
-            self.create_tb() # 1 创建app的comment表
-            self.init_read()
-            self.update_appin_fetched(appid[0])
-            print(appid, appid[1], 'comment fetched')   
+   
 
     def init_read(self, appid, lastcomment_updated=None):
         """
@@ -480,20 +527,34 @@ class FetchJob(FetchComment):
         start = time.ctime()
         breakmark = False
 
+        # 最新评论默认在第1页，但是当第一页出现page error时，最新评论应该出现在下一页
+        page_lastest_comment = 1
+        page_lastest_comment_mark = False # 代表是否被更新过，更新过之后，该值为True
+
         for pagei in range(1, 11):
 
             if breakmark: # 已经取完最新的数据了，结束for循环
                 break
             url = templateurl.format(pagei, appid)
             
-            results_xml = requests.get(url)
+            results_xml = requests.get(url, proxies={'http':random.choice(self.pro)})
+            print(str(appid)+': status code : '+str(results_xml.status_code))
+            if results_xml.status_code == 403:
+                return
+
             results_text = results_xml.content.decode('utf-8', 'ignore')
             
             try:
                 root = ET.fromstring(results_text )
                
             except ET.ParseError:
+                # 如果第一页有问题，就可能导致comment_update不能更新
                 continue # xml文件本身有问题
+
+            
+            if not page_lastest_comment_mark: 
+                page_lastest_comment = pagei
+                page_lastest_comment_mark = True
 
             userid = ''
             authorname = ''
@@ -514,8 +575,7 @@ class FetchJob(FetchComment):
                     continue # 第一个entry是app信息 跳过
 
                 itementry = {} 
-                user = {}  
-                 
+                user = {}   
                 for entry in  entries:  
                     tag = entry.tag.replace(ns['replace_apple'],'')
                     tag = tag.replace(ns['replace_w3org'],'')
@@ -535,12 +595,14 @@ class FetchJob(FetchComment):
                             user['name'] = authorname
                               
                     if tag =='updated':
+                        
                         updated = entry.text[:19].replace('T', ' ')
                         itementry['updated'] = updated # 用户评论日期
-                        if pagei == 1 and entry_count == 2: # page为第一页的第二个entry就是最新的
+                         
+                         
+                        if pagei == page_lastest_comment and entry_count == 2: # page为第一页的第二个entry就是最新的  
                             comment_updated = updated
-
-                        #datetime.strptime('1993-12-09 18:55:44', '%Y-%m-%d %H:%M:%S')
+                            
                         if lastcomment_updated: # 
                             # 当lastcomment_updated不为None的时候，代表执行的是每日的例行抓取工作
                             # 而不是新来的app进行抓取，注意的是，如果以前抓取的时候，未抓取到任何
@@ -607,17 +669,19 @@ class FetchJob(FetchComment):
                     #self.insert_appleuser_tb(userid, authorname)
                     #self.insert_comment_tb(appid, **item)
         
-        #print('fetched:',start)
-        #print('fetched:',time.ctime())   
+     
         # 数据已全部抓取完毕，更新appinof表的counter字段 
         if count > 0:   
             self.insertmany_appleuser_tb(users)
             self.insertmany_comment_tb(appid, items, items_t)
             self.add_comment_couter(count, appid) 
+         
             self.update_appin_fetched(appid, comment_updated)
             print(appid, count)
         else:
-            self.update_appin_fetched(appid)
+            self.update_appin_fetched(appid )
+            
+
     def find_duplicates(self):
         """查找所有有重复数据的table"""
         apps = self.get_all_appin()
@@ -639,17 +703,34 @@ class FetchJob(FetchComment):
                 except MySQLdb.Error as e:
                     logging.error(e)
             print (count, app[0])
-             
 
-
+    def find_new_ones(self):
+        apps = self.get_new_appin()
+         
+        count = len(apps)
+        for app in apps:
+            count -= 1
+            sql = "select count(*) from t{}".format(app[0])
+            print (count, app[0])
+            try:
+                self.cursor.execute(sql)
+            except MySQLdb.Error as e:
+                update ='update appinfo set fetched = 2 where id = ' + str(app[0])
+                self.cursor.execute(update)
+                self.db.commit()
+                 
 def job(apps):
     f = FetchJob()
     f.runapps(apps)
     f.close()
     print(str(threading.current_thread())+'Done')
 
-def tmp():
-    
+def fetchedone(appid):
+    """
+    抓取某个app的最新comment
+    350962117, 414478124, 398453262, 989673964
+    未抓取的app：368377690
+    """
 
     f = FetchJob()
     #　测试抓取微信的数据
@@ -661,10 +742,10 @@ def tmp():
     oldusercount = spider.count_all_appleusers()
     oldcommentcount = spider.count_all_comments()
 
-    appinfo = f.get_app_comment_updated(299852753)
+    appinfo = f.get_app_comment_updated(appid)
     print(appinfo[0], appinfo[1])
-    if appinfo[1]:
-        
+    f.create_tb(appinfo[0]) # 1 创建app的comment表
+    if appinfo[1]: 
         f.init_read(appinfo[0], appinfo[1])
     else:
         f.init_read(appinfo[0])
@@ -673,19 +754,24 @@ def tmp():
     newusercount = spider.count_all_appleusers()
     spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
                                   newuser=newusercount-oldusercount)
-    spider.close()
-    
-    
+    spider.close() 
     f.close()
 
-
-if __name__ == "__main__":
-    
+def fetchall(revert = False, num=None, sql=None):
+    """重新抓取所有app的comment"""
     f = FetchJob()
-    #f.get_appinfo_internet()
-    #f.run(40)
- 
-    apps = f.get_unfetched_appin() 
+    if revert and sql is None:
+        f.revert_appinfo_fetched()
+    
+    if sql:
+        apps = f.get_appin_bysql(sql)
+    else:
+        apps = f.get_unfetched_appin() 
+    
+    # 抓取指定数量的app
+    if num:
+        apps = apps[:num]
+
     start = time.ctime()
     length = len(apps)
     step = int(length/4)
@@ -715,3 +801,115 @@ if __name__ == "__main__":
     print('start:', start)
     print('end  :', time.ctime())
     f.close()
+
+def fetchallwithout_thr(revert = False, num=None, sql=None):
+    """无线程方式获取app"""
+    f = FetchJob()
+    if revert and sql is None:
+        f.revert_appinfo_fetched()
+    
+    if sql:
+        apps = f.get_appin_bysql(sql)
+    else:
+        apps = f.get_unfetched_appin() 
+    start = time.ctime()
+    
+    ts = []
+    spider = Spider()
+    oldusercount = spider.count_all_appleusers()
+    oldcommentcount = spider.count_all_comments()
+    f.runapps(apps)
+    print ('fetched done' )
+    newusercount = spider.count_all_appleusers()
+    newcommentcount = spider.count_all_comments()
+    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                  newuser=newusercount-oldusercount)
+ 
+    print('start:', start)
+    print('end  :', time.ctime())
+    f.close()
+def readlog():
+    f = open('fetchapp.log', 'r')
+    text = f.read()
+    reid='\d{6,}'
+    appids = re.findall(reid, text)
+    if appids:
+        for appid in appids:
+            fetchedone(appid)
+    f.close()
+
+def fetch_new_without_thr(revert = False, num=None, sql=None):
+    """无线程方式获取app"""
+    f = FetchJob()
+    if revert and sql is None:
+        f.revert_appinfo_fetched()
+    
+    if sql:
+        apps = f.get_appin_bysql(sql)
+    else:
+        apps = f.get_unfetched_appin() 
+    start = time.ctime()
+    
+    ts = []
+    spider = Spider()
+    oldusercount = spider.count_all_appleusers()
+    oldcommentcount = spider.count_all_comments()
+    f.runapps(apps)
+    print ('fetched done' )
+    newusercount = spider.count_all_appleusers()
+    newcommentcount = spider.count_all_comments()
+    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                  newuser=newusercount-oldusercount)
+ 
+    print('start:', start)
+    print('end  :', time.ctime())
+    f.close()
+
+
+
+def fetch_new_without_thr_top(sql, num=None  ):
+    """在top表中，无线程方式获取app"""
+    f = FetchJob() 
+     
+    apps = f.get_top_appin_bysql(sql)
+     
+    if num:
+        apps = apps[:num]
+
+    start = time.ctime()
+    
+    ts = []
+    spider = Spider()
+    oldusercount = spider.count_all_appleusers()
+    oldcommentcount = spider.count_all_comments()
+    for app in apps:
+        fetchedone(app[0])
+    print ('fetched done' )
+    newusercount = spider.count_all_appleusers()
+    newcommentcount = spider.count_all_comments()
+    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                  newuser=newusercount-oldusercount)
+ 
+    print('start:', start)
+    print('end  :', time.ctime())
+    f.close()
+
+def readlog():
+    f = open('fetchapp.log', 'r')
+    text = f.read()
+    reid='\d{6,}'
+    appids = re.findall(reid, text)
+    if appids:
+        for appid in appids:
+            fetchedone(appid)
+    f.close()
+if __name__ == "__main__":
+    fetch_new_without_thr_top(sql="counter > 300 and date = '2017-09-19'")
+    #fetchedone(1269471059)
+    #f = FetchJob()
+    #f.find_new_ones() 
+    #fetch_new_without_thr(sql='fetched = 2')
+    #f.close()
+    #readlog()
+    #fetchall(  num=50)
+    
