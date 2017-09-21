@@ -16,8 +16,7 @@ import logging
 from applespider import Spider
 from FetchComment import FetchComment
 
-logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='stat.log', filemode='a+')
+
 
 class Stat(FetchComment):
     """
@@ -31,6 +30,8 @@ class Stat(FetchComment):
     
     COUNT = 20
     def __init__(self ): 
+        logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
+                     filename='stat.log', filemode='a+')
          
         super(Stat, self).__init__()
      
@@ -59,13 +60,14 @@ class StatJob(Stat):
     def __init__(self):
         super(StatJob, self).__init__()
     
-    def cal_count(self, all_mark=False):
+    def cal_count(self, all_mark=False, day=-1):
         """计算每天app评论数量"""
-        #lastday = datetime.today().date() + timedelta(days=-2)
-        lastday = datetime.today().date() + timedelta(days=-1)
+        lastday = datetime.today().date() + timedelta(days=day)
+        #lastday = datetime.today().date() + timedelta(days=-1)
         lastday = lastday.strftime('%Y-%m-%d')
         results = []
-        insertsql = """insert into top_comment_app (appid,title, date, counter) values (%s, %s ,%s ,%s)"""
+        insertsql = """insert into top_comment_app (appid,title, date, counter) values (%s, %s ,%s ,%s)
+                                                     on duplicate key update counter =values(counter)"""
         appids = self.get_all_appin()
         num = 0
         for app in appids:
@@ -89,6 +91,8 @@ class StatJob(Stat):
      
 if __name__ == "__main__":
     s = StatJob()
-    s.cal_count()
+    s.cal_count(-1)
+    s.cal_count(-2)
+    s.cal_count(-3)
     s.close()
     

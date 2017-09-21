@@ -29,7 +29,7 @@ class FetchComment(object):
     COUNT = 20
     def __init__(self ):
         #db = MySQLdb.connect(host="127.0.0.1",user="root",passwd="sqlroot",db="Comment",charset="utf8mb4") 
-        db = MySQLdb.connect(host="192.168.1.101",user="root",passwd="comment",db="comment",charset="utf8mb4") 
+        db = MySQLdb.connect(host="192.168.1.105",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
         self.db = db
         self.cursor = self.db.cursor()
@@ -483,11 +483,11 @@ class FetchJob(FetchComment):
         """
         多线程方式
         """ 
-        for appid in apps: 
-            self.create_tb(appid[0]) # 1 创建app的comment表
+        for appid in apps:  
             if appid[1]:
                 self.init_read(appid[0], appid[1])
             else:
+                self.create_tb(appid[0]) # 1 创建app的comment表
                 self.init_read(appid[0])
             print(appid[0], appid[2], 'comment fetched')
 
@@ -669,7 +669,8 @@ class FetchJob(FetchComment):
                     #self.insert_appleuser_tb(userid, authorname)
                     #self.insert_comment_tb(appid, **item)
         
-     
+            if count == 0:# 没有抓取到数据，不需要继续往后走了
+                break
         # 数据已全部抓取完毕，更新appinof表的counter字段 
         if count > 0:   
             self.insertmany_appleuser_tb(users)
@@ -705,6 +706,7 @@ class FetchJob(FetchComment):
             print (count, app[0])
 
     def find_new_ones(self):
+        """找出那些还没有创建分表的数据"""
         apps = self.get_new_appin()
          
         count = len(apps)
@@ -744,11 +746,13 @@ def fetchedone(appid):
 
     appinfo = f.get_app_comment_updated(appid)
     print(appinfo[0], appinfo[1])
-    f.create_tb(appinfo[0]) # 1 创建app的comment表
+    
     if appinfo[1]: 
         f.init_read(appinfo[0], appinfo[1])
     else:
+        f.create_tb(appinfo[0]) # 1 创建app的comment表
         f.init_read(appinfo[0])
+
  
     newcommentcount = spider.count_all_comments()
     newusercount = spider.count_all_appleusers()
@@ -904,8 +908,9 @@ def readlog():
             fetchedone(appid)
     f.close()
 if __name__ == "__main__":
-    fetch_new_without_thr_top(sql="counter > 300 and date = '2017-09-19'")
-    #fetchedone(1269471059)
+    fetch_new_without_thr_top(sql="counter > 300 and date = '2017-09-20'")
+    #fetch_new_without_thr(sql="fetched = 0")
+    #fetchedone(1207640832)
     #f = FetchJob()
     #f.find_new_ones() 
     #fetch_new_without_thr(sql='fetched = 2')

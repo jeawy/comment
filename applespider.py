@@ -26,7 +26,7 @@ class Spider(object):
 
         self.subcategory_json = []
         self.subcategoryitem = {}
-        db = MySQLdb.connect(host="192.168.1.101",user="root",passwd="comment",db="comment",charset="utf8mb4") 
+        db = MySQLdb.connect(host="192.168.1.105",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect(host="localhost",user="root",passwd="sqlroot",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
         self.db = db
