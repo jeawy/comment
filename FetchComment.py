@@ -121,6 +121,18 @@ class FetchComment(object):
             self.usernum = self.COUNT
         else:
             self.usernum -= 1
+        
+    def insert_fakeapp(self, appid, apptitle):
+        """
+        放入appid和apptitle信息到刷评app池中
+        """
+        sql = """insert into fakeapp (appid, title, date) values(%s, %s, %s)"""
+        now = datetime.today().date()
+        try:
+            self.cursor.execute(sql, (appid, apptitle, now))
+            self.db.commit()
+        except MySQLdb.Error as e:
+            pass 
 
     def insertmany_appleuser_tb(self, users):
         """向苹果用户表中插入用户数据，如果用户id已存在，则不插入"""
@@ -265,7 +277,7 @@ class FetchComment(object):
         获取appid指定的comment_updated日期
         """ 
  
-        sql = 'select  id, comment_updated from appinfo   where id='+str(appid) + ';'
+        sql = 'select  id, comment_updated, title from appinfo   where id='+str(appid) + ';'
         self.cursor.execute(sql)
         appinfo = self.cursor.fetchone() 
         return appinfo
@@ -477,15 +489,16 @@ class FetchJob(FetchComment):
             else:
                 self.init_read(appid[0])
             
-            print(appid[0], appid[1], 'comment fetched')
+            print(appid[0], appid[1], appid[2], 'comment fetched')
     
-    def runapps(self, apps):
+    def runapps(self, apps, fake=False):
         """
         多线程方式
+        fake 刷评检测标示
         """ 
         for appid in apps:  
             if appid[1]:
-                self.init_read(appid[0], appid[1])
+                self.init_read(appid[0], appid[1], fake=fake)
             else:
                 self.create_tb(appid[0]) # 1 创建app的comment表
                 self.init_read(appid[0])
@@ -506,10 +519,11 @@ class FetchJob(FetchComment):
 
    
 
-    def init_read(self, appid, lastcomment_updated=None):
+    def init_read(self, appid, apptitle='', lastcomment_updated=None, fake=False):
         """
         抓取某个app的评论
         lastcomment_updated 为app上次抓取到最新评论的时间,如果是首次抓取时，或者之前没有抓取到评论时，该值为None
+        fake 刷评检测标志，如果fake为真时，则开启刷评检测
         """
         
         templateurl = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=en&&cc=cn'
@@ -678,7 +692,11 @@ class FetchJob(FetchComment):
             self.add_comment_couter(count, appid) 
          
             self.update_appin_fetched(appid, comment_updated)
-            print(appid, count)
+            print(appid, count, apptitle)
+            if fake and count > 400: # 刷评检测开启，本次抓取的时候超过400
+                # 将app放入刷评app池
+                self.insert_fakeapp(appid, apptitle)
+
         else:
             self.update_appin_fetched(appid )
             
@@ -727,7 +745,7 @@ def job(apps):
     f.close()
     print(str(threading.current_thread())+'Done')
 
-def fetchedone(appid):
+def fetchedone(appid, fake=False):
     """
     抓取某个app的最新comment
     350962117, 414478124, 398453262, 989673964
@@ -748,10 +766,11 @@ def fetchedone(appid):
     print(appinfo[0], appinfo[1])
     
     if appinfo[1]: 
-        f.init_read(appinfo[0], appinfo[1])
+        f.init_read(appinfo[0], apptitle=appinfo[2], lastcomment_updated=appinfo[1], fake=fake)
     else:
+        # 新来的app不对其进行刷评行为检测
         f.create_tb(appinfo[0]) # 1 创建app的comment表
-        f.init_read(appinfo[0])
+        f.init_read(appinfo[0], apptitle=appinfo[2])
 
  
     newcommentcount = spider.count_all_comments()
@@ -842,8 +861,11 @@ def readlog():
             fetchedone(appid)
     f.close()
 
-def fetch_new_without_thr(revert = False, num=None, sql=None):
-    """无线程方式获取app"""
+def fetch_new_without_thr(revert = False, num=None, sql=None, fake=False):
+    """
+    无线程方式获取app
+    fake 表示是否开启刷评检测，默认为否
+    """
     f = FetchJob()
     if revert and sql is None:
         f.revert_appinfo_fetched()
@@ -858,7 +880,7 @@ def fetch_new_without_thr(revert = False, num=None, sql=None):
     spider = Spider()
     oldusercount = spider.count_all_appleusers()
     oldcommentcount = spider.count_all_comments()
-    f.runapps(apps)
+    f.runapps(apps, fake=fake)
     print ('fetched done' )
     newusercount = spider.count_all_appleusers()
     newcommentcount = spider.count_all_comments()
@@ -871,8 +893,12 @@ def fetch_new_without_thr(revert = False, num=None, sql=None):
 
 
 
-def fetch_new_without_thr_top(sql, num=None  ):
-    """在top表中，无线程方式获取app"""
+def fetch_new_without_thr_top(sql, num=None, fake=False ):
+    """
+    在top表中，无线程方式获取app
+    num 代表抓取前num个app的评论
+    fake 刷评检测标示
+    """
     f = FetchJob() 
      
     apps = f.get_top_appin_bysql(sql)
@@ -887,7 +913,7 @@ def fetch_new_without_thr_top(sql, num=None  ):
     oldusercount = spider.count_all_appleusers()
     oldcommentcount = spider.count_all_comments()
     for app in apps:
-        fetchedone(app[0])
+        fetchedone(app[0], fake=fake)
     print ('fetched done' )
     newusercount = spider.count_all_appleusers()
     newcommentcount = spider.count_all_comments()
@@ -908,11 +934,14 @@ def readlog():
             fetchedone(appid)
     f.close()
 if __name__ == "__main__":
-    fetch_new_without_thr_top(sql="counter > 300 and date = '2017-09-20'")
+    fetch_new_without_thr_top(sql="counter < 100 and date = '2017-09-20'", fake=True)
+    
     #fetch_new_without_thr(sql="fetched = 0")
+    #fetch_new_without_thr(sql="category = 6014") # 抓取游戏分类下的评论
+    #fetch_new_without_thr(sql="category = 6015")
     #fetchedone(1207640832)
     #f = FetchJob()
-    #f.find_new_ones() 
+    #f.insert_fakeapp(123, 'test') 
     #fetch_new_without_thr(sql='fetched = 2')
     #f.close()
     #readlog()

@@ -51,6 +51,23 @@ class Stat(FetchComment):
         self.cursor.execute(sql)
         self.db.commit()
     
+    def create_fakeapp_tb(self):
+        """
+        创建表：fakeapp ,用来记录可能存在刷评论的app
+        hot 刷评指数hot，默认为24
+        每小时抓取刷评池中app的评论，如果没有抓到则把刷评指数hot-1，如果超过100评论，则hot+1，不超过100，则不增加也不减少
+        """
+        sql ="""create table if not exists fakeapp(
+            appid int(32),
+            title varchar(1024),
+            date date,
+            hot int(32) default 24,
+            fetched boolean default 0,
+            primary key (appid)  
+        ) engine=myisam  CHARSET=utf8mb4;"""
+        self.cursor.execute(sql)
+        self.db.commit()
+    
 
      
 class StatJob(Stat):
@@ -91,8 +108,8 @@ class StatJob(Stat):
      
 if __name__ == "__main__":
     s = StatJob()
-    s.cal_count(-1)
-    s.cal_count(-2)
-    s.cal_count(-3)
+    #s.cal_count(-1)
+    #s.cal_count(-2) 
+    s.create_fakeapp_tb()
     s.close()
     
