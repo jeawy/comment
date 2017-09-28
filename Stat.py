@@ -108,8 +108,7 @@ class StatJob(Stat):
      
 if __name__ == "__main__":
     s = StatJob()
-    #s.cal_count(-1)
-    #s.cal_count(-2) 
-    s.create_fakeapp_tb()
+    s.cal_count(-1)
+    s.cal_count(-2)  
     s.close()
     

@@ -61,7 +61,7 @@ class FetchComment(object):
             merged boolean default 0,
             PRIMARY KEY(id) ,
             UNIQUE (userid, updated)
-        )ENGINE=InnoDB auto_increment=1 DEFAULT CHARSET=utf8mb4;""".format(appid)
+        )ENGINE=myisam auto_increment=1 DEFAULT CHARSET=utf8mb4;""".format(appid)
         self.cursor.execute(createsql)
         self.db.commit()
          
@@ -94,7 +94,7 @@ class FetchComment(object):
 
     def create_appleuser_tb(self):
         """如果评论用户表table不存在则创建，为每个app创建一个表，共9万多个表，因为有9万多个APP"""
-        createsql = """CREATE TABLE if not exists appleuser( id int(32) ,  name varchar(1024),  PRIMARY KEY(id))ENGINE=InnoDB ;""" 
+        createsql = """CREATE TABLE if not exists appleuser( id int(32) ,  name varchar(1024),  PRIMARY KEY(id))ENGINE=myisam ;""" 
         
         self.cursor.execute(createsql)
         self.db.commit()
@@ -350,6 +350,13 @@ class FetchComment(object):
         self.cursor.execute(sql)
         apps = self.cursor.fetchall() 
         return apps
+    
+    def get_fakeapp_bysql(self, sql): 
+        """从fakeapp获取还未抓取的top appid"""
+        sql = """select appid, title from fakeapp  """+sql  
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall() 
+        return apps
 
     def get_unfetch_detail_appin(self): 
         """获取还未抓取的详细信息appid"""
@@ -483,10 +490,11 @@ class FetchJob(FetchComment):
             appids = appids[:num]
 
         for appid in appids: 
-            self.create_tb(appid[0]) # 1 创建app的comment表
-            if appid[1]:
-                self.init_read(appid[0], appid[1])
+            
+            if appid[1]: 
+                self.init_read(appid[0], apptitle=appid[2],lastcomment_updated=appid[1])
             else:
+                self.create_tb(appid[0]) # 1 创建app的comment表
                 self.init_read(appid[0])
             
             print(appid[0], appid[1], appid[2], 'comment fetched')
@@ -498,7 +506,8 @@ class FetchJob(FetchComment):
         """ 
         for appid in apps:  
             if appid[1]:
-                self.init_read(appid[0], appid[1], fake=fake)
+                
+                self.init_read(appid[0], apptitle=appid[2], lastcomment_updated=appid[1], fake=fake)
             else:
                 self.create_tb(appid[0]) # 1 创建app的comment表
                 self.init_read(appid[0])
@@ -924,6 +933,33 @@ def fetch_new_without_thr_top(sql, num=None, fake=False ):
     print('end  :', time.ctime())
     f.close()
 
+def fetchfakeapp(sql, fake=False):
+    """
+    在fakeapp表中，无线程方式获取app
+    
+    fake 刷评检测标示
+    """
+    f = FetchJob() 
+     
+    apps = f.get_fakeapp_bysql(sql)
+  
+    start = time.ctime()
+  
+    spider = Spider()
+    oldusercount = spider.count_all_appleusers()
+    oldcommentcount = spider.count_all_comments()
+    for app in apps:
+        fetchedone(app[0], fake=fake)
+    print ('fetched done' )
+    newusercount = spider.count_all_appleusers()
+    newcommentcount = spider.count_all_comments()
+    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                  newuser=newusercount-oldusercount)
+ 
+    print('start:', start)
+    print('end  :', time.ctime())
+    f.close()
+
 def readlog():
     f = open('fetchapp.log', 'r')
     text = f.read()
@@ -934,12 +970,12 @@ def readlog():
             fetchedone(appid)
     f.close()
 if __name__ == "__main__":
-    fetch_new_without_thr_top(sql="counter < 100 and date = '2017-09-20'", fake=True)
-    
-    #fetch_new_without_thr(sql="fetched = 0")
-    #fetch_new_without_thr(sql="category = 6014") # 抓取游戏分类下的评论
-    #fetch_new_without_thr(sql="category = 6015")
-    #fetchedone(1207640832)
+    fetch_new_without_thr_top(sql="counter >= 200 and date ='2017-09-22' ", fake=True )  
+    #fetchfakeapp(sql="")
+    # fetch_new_without_thr(sql="fetched =2", fake=True)
+    #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
+    #fetch_new_without_thr(sql="category = 6015", fake=True)
+    #fetchedone(368377690)
     #f = FetchJob()
     #f.insert_fakeapp(123, 'test') 
     #fetch_new_without_thr(sql='fetched = 2')

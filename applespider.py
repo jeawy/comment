@@ -216,7 +216,7 @@ class Spider(object):
             free boolean, 
             fetched_date date,
             primary key(id)
-            ) engine=InnoDB ;"""
+            ) engine=myisam ;"""
         self.cursor.execute(sql)
         self.db.commit()
     
