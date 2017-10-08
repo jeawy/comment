@@ -108,7 +108,11 @@ class StatJob(Stat):
      
 if __name__ == "__main__":
     s = StatJob()
-    s.cal_count(-1)
-    s.cal_count(-2)  
+    s.cal_count(day = -1)
+    s.cal_count(day = -2)  
+    s.cal_count(day = -3)
+    s.cal_count(day = -4) 
+    s.cal_count(day = -5)
+    
     s.close()
     

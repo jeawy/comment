@@ -171,7 +171,7 @@ class Spider(object):
         """
         count and return all appleuser数量
         """
-        sql = "select count(*) from appleuser " 
+        sql = "select count(*) from newappleuser " 
         self.cursor.execute(sql)
         count = self.cursor.fetchone()
         return count[0]
