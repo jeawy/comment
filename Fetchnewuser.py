@@ -44,26 +44,7 @@ class FetchComment(object):
     def close(self):
         self.db.close()
 
-    def create_tb(self, appid):
-        """如果table不存在则创建，为每个app创建一个表，共9万多个表，因为有9万多个APP"""
-        createsql = """CREATE TABLE if not exists t{}(
-            id int(32) NOT NULL auto_increment,
-            userid int,
-            name varchar(1024),
-            updated datetime,
-            title varchar(4096) not null, 
-            rating int,
-            version varchar(128),
-            votesum int,
-            votecount int,
-            contenthtml text,
-            content text,  
-            merged boolean default 0,
-            PRIMARY KEY(id) ,
-            UNIQUE (userid, updated)
-        )ENGINE=myisam auto_increment=1 DEFAULT CHARSET=utf8mb4;""".format(appid)
-        self.cursor.execute(createsql)
-        self.db.commit()
+  
          
     
     def create_comment_tb(self):
@@ -813,8 +794,7 @@ class PergeUser(FetchJob):
             sql = "select id, name, userid from appleuser where clean=0 and userid is not null " 
         start = time.ctime() 
         self.cursor.execute(sql)
-        users = self.cursor.fetchall()
-        logging.error ('1 取得未清洗的用户信息 done' )  
+        users = self.cursor.fetchall() 
 
         return users
 
@@ -828,10 +808,17 @@ class PergeUser(FetchJob):
         self.cursor.execute(sql)
         comments = self.cursor.fetchall() 
         for comment in comments:
-            updatesql = "update comment set userid = {0} where id = {1}".format(newuserid, comment[0])
-            self.cursor.execute(updatesql)
-            self.db.commit()
-        logging.error ('2 comment done' )  
+            try:
+                updatesql = "update comment set userid = {0} where id = {1}".format(newuserid, comment[0])
+                 
+                self.cursor.execute(updatesql)
+                self.db.commit()
+            except MySQLdb.IntegrityError  as e:
+                print ('update comment failed')
+                delsql = 'delete from comment where id = {0}'.format(comment[0])
+                self.cursor.execute(delsql)
+                self.db.commit()
+  
         return comments
     
 
@@ -845,22 +832,36 @@ class PergeUser(FetchJob):
         self.cursor.execute(sql)
         comments = self.cursor.fetchall()
         for comment in comments:
-            updatesql = "update  t{0} set userid = {1} where id = {2}".format(appid, newuserid, comment[0])
-            self.cursor.execute(updatesql)
-            self.db.commit()
-        logging.error ('3 分表t{0}'.format(appid) )  
+            try:
+                updatesql = "update  t{0} set userid = {1} where id = {2}".format(appid, newuserid, comment[0])
+                self.cursor.execute(updatesql)
+                self.db.commit()
+            except MySQLdb.Error as e:
+                print ('update t{0} failed'.format(appid ))
+                delsql = 'delete from t{0} where id = {1}'.format(appid, comment[0])
+                self.cursor.execute(delsql)
+                self.db.commit()
+   
 
     def insert_user(self, userid, name):
         """
         4 将用户插入新用户表中
         """
-        start = time.ctime() 
+        
         sql = "insert into newappleuser (id, name) values( %s, %s)  on duplicate key update name=values(name)"  
  
         self.cursor.execute(sql, (userid, name))
-        self.db.commit()
-        logging.error ('4 user  insert done' )  
+        self.db.commit() 
+    
 
+    def insert_manyuser(self, users):
+        """
+        4 将用户插入新用户表中
+        """ 
+        sql = "insert into newappleuser (id, name) values( %s, %s)  on duplicate key update name=values(name)"  
+ 
+        self.cursor.executemany(sql, users)
+        self.db.commit() 
 
     def delete_user(self, userid ):
         """
@@ -870,12 +871,18 @@ class PergeUser(FetchJob):
         sql = "delete from appleuser where id={0}"  .format(userid)
  
         self.cursor.execute(sql)
-        self.db.commit()
-        logging.error ('5 user {0} delete done'.format(userid) )  
+        self.db.commit()  
 
 
 if __name__ == "__main__": 
-    fetch_new_without_thr(sql="clean =0 limit 2000", fake=False)
+    for i in range(0,10):
+        while True:
+            try:
+                fetch_new_without_thr(sql="clean =0 limit 2000", fake=False)
+            except :
+                continue
+            break
+    
     
     
     

@@ -972,7 +972,12 @@ def readlog():
             fetchedone(appid)
     f.close()
 if __name__ == "__main__":
-    fetch_new_without_thr_top(sql="  counter > 100  group by appid", fake=True )  
+    for i in range(1, 5):
+        try:
+            fetch_new_without_thr_top(sql="  counter  > 100  group by appid", fake=True )  
+            break
+        except :
+            continue
     #fetchfakeapp(sql="")
     #fetch_new_without_thr(sql="fetched =0", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论

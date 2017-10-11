@@ -3,5 +3,10 @@
 from FetchComment import fetchfakeapp
     
 if __name__ == "__main__": 
-    fetchfakeapp(sql="")
+    for i in range(1, 5):
+        try:
+            fetchfakeapp(sql="")
+            break
+        except :
+            continue
  
