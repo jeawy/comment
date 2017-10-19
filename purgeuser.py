@@ -8,7 +8,7 @@ def run():
     p = PergeUser()
     start = time.ctime() 
     # 1 取clean=0
-    users = p.get_unclean_user()
+    users = p.get_unclean_user( 10000)
     """
     length = len(users)
 
@@ -46,11 +46,14 @@ def job(p,  users):
         newuserid = user[2]
         # 2 查comment表，并update到新
         comments = p.get_comments(userid, newuserid)
-     
+        print(len(comments))
+      
         for comment in comments:
             appid = comment[1]
             # 3 在评论分表t{}中查找用户的评论，并更新其新用户id
+            print (appid)
             p.get_t_comments(appid, userid, newuserid)
+       
         # 4 将用户插入新用户表中
         p.insert_user(newuserid, user[1]) 
         # 5 delete

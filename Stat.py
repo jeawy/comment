@@ -111,8 +111,7 @@ if __name__ == "__main__":
     s.cal_count(day = -1)
     s.cal_count(day = -2)  
     s.cal_count(day = -3)
-    s.cal_count(day = -4) 
-    s.cal_count(day = -5)
+    
     
     s.close()
     

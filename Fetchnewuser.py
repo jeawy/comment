@@ -373,7 +373,7 @@ class FetchComment(object):
         更新app，clean=1， 表示appid的用户id已经更新完了
         """ 
          
-        sql = """update  appinfo set clean = 1 where id = {0}""".format(appid)  
+        sql = """update  appinfo set merged = 0 where id = {0}""".format(appid)  
         self.cursor.execute(sql)
         self.db.commit()
     
@@ -521,7 +521,9 @@ class FetchJob(FetchComment):
         lastcomment_updated 为app上次抓取到最新评论的时间,如果是首次抓取时，或者之前没有抓取到评论时，该值为None
         fake 刷评检测标志，如果fake为真时，则开启刷评检测
         """
-        
+        # 最有帮助的评论链接
+        mosthelpful = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mosthelpful/xml?l=cn&&cc=cn'
+
         templateurl = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=en&&cc=cn'
         ns = {
             'replace_w3org' : '{http://www.w3.org/2005/Atom}',
@@ -531,6 +533,7 @@ class FetchJob(FetchComment):
         items = [] # comment记录
         items_t = [] # t23893238239记录
         users = [] # 评论用户
+        oldusers = [] # 旧评论用户
         
         comment_updated = '' #最新评论时间
 
@@ -613,11 +616,74 @@ class FetchJob(FetchComment):
                                
                             else:  
                                 break # 非用户评论      
-         
+                    if tag =='updated':
+                        
+                        updated = entry.text[:19].replace('T', ' ')
+                        itementry['updated'] = updated # 用户评论日期
+                         
+                         
+                        if pagei == page_lastest_comment and entry_count == 2: # page为第一页的第二个entry就是最新的  
+                            comment_updated = updated
+                
+                        if lastcomment_updated: # 
+                            # 当lastcomment_updated不为None的时候，代表执行的是每日的例行抓取工作
+                            # 而不是新来的app进行抓取，注意的是，如果以前抓取的时候，未抓取到任何
+                            # 评论数据时，lastcomment_updated也是为空的
+                            # updatedtime = datetime.strptime('1993-12-09 18:55:44', '%Y-%m-%d %H:%M:%S')
+                            updatedtime = datetime.strptime(updated, '%Y-%m-%d %H:%M:%S')
+                            
+                            if updatedtime == lastcomment_updated: # 代表取到了上次抓取时抓取的最后一条评论了
+                                breakmark = True # 停止所有循环 
+                                break
+                            elif updatedtime < lastcomment_updated:
+                                breakmark = True # 停止所有循环
+                                break
+
+                    if tag =='title': # 用户评论标题
+                        title = entry.text  
+                        itementry['title'] = title.encode().decode('utf8', 'ignore') 
+                    
+                    if tag =='content':   # 评论内容
+                        content = entry.text
+                        if entry.attrib['type']=='html':
+                            # 保存HTML版本的content用于阅读
+                            itementry['contenthtml'] = content  
+                        else:
+                            # 保存纯文本版本的content用于分析
+                            itementry['content'] = content 
+
+                    if  tag=='rating':  # 评分
+                        rating = entry.text
+                        itementry['rating'] = rating 
+                    
+                    if  tag=='voteSum': 
+                        voteSum = entry.text
+                        itementry['voteSum'] = voteSum # 不知道是什么
+
+                    if  tag=='voteCount': 
+                        voteCount = entry.text
+                        itementry['voteCount'] = voteCount # 不知道是什么
+
+                    if  tag=='version': 
+                        version = entry.text
+                        itementry['version'] = version # 应用版本
                 # 将apple用户+新提取的评论插入数据库
                 if userid and authorname and not breakmark:
                     count += 1 # count 为实际抓取的数量   
-                    users.append((user['id'], user['name'], user['userid']))
+                    if 'version' not in itementry:
+                        itementry['version'] = '-1'
+
+                    items.append((appid, itementry['userid'], itementry['name'] ,itementry['updated'] ,
+                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
+                    itementry['content']   ))
+
+                    items_t.append((itementry['userid'], itementry['name'] ,itementry['updated'] ,
+                    itementry['title'] ,itementry['rating'],itementry['version'] ,itementry['voteSum'] ,itementry['voteCount'] ,
+                    itementry['contenthtml'], itementry['content']   ))
+
+                    users.append((user['userid'], user['name']))
+
+                    oldusers.append((user['id'], user['name'], user['userid']))
               
         
             if count == 0: # 没有抓取到数据，不需要继续往后走了
@@ -625,6 +691,10 @@ class FetchJob(FetchComment):
         # 数据已全部抓取完毕，更新appinof表的counter字段 
        
         if count > 0:   
+            self.insertmany_appleuser_tb(users)
+            self.insertmany_comment_tb(appid, items, items_t)
+            self.add_comment_couter(count, appid) 
+
             self.update_appleuser_tb(users) 
             print(appid, count, apptitle)  
          
@@ -789,22 +859,25 @@ class PergeUser(FetchJob):
         1 取得未清洗的用户信息
         """
         if num > 0:
-            sql = "select id, name, userid from appleuser where clean=0 and userid is not null limit {0}".format(num)
+            sql = "select id, name  from appleuser   limit {0}".format(num)
         else:
-            sql = "select id, name, userid from appleuser where clean=0 and userid is not null " 
-        start = time.ctime() 
+            sql = "select id, name  from appleuser" 
+     
         self.cursor.execute(sql)
-        users = self.cursor.fetchall() 
-
+        users = self.cursor.fetchall()  
         return users
-
+    def get_newuserid(self, username):
+        sql = "select id, name from newappleuser where name='{0}".format(username)
+        self.cursor.execute(sql)
+        users = self.cursor.fetchall()
+        return users
     def get_comments(self, userid, newuserid):
         """
         2 在comment中根据userid查找comments, 并更新其中的用户id为newuserid
         """
         
         sql = "select id, appid, userid from comment where userid={0}  " .format(userid)
-        start = time.ctime() 
+       
         self.cursor.execute(sql)
         comments = self.cursor.fetchall() 
         for comment in comments:
@@ -827,16 +900,16 @@ class PergeUser(FetchJob):
         3 在评论分表t{}中查找用户的评论，并更新其新用户id
         """
         start = time.ctime() 
-        sql = "select id, userid from t{0} where userid={0}  " .format(appid, userid)
+        sql = "select id, userid from t{0} where userid={1}  " .format(appid, userid)
         
         self.cursor.execute(sql)
-        comments = self.cursor.fetchall()
+        comments = self.cursor.fetchall() 
         for comment in comments:
             try:
                 updatesql = "update  t{0} set userid = {1} where id = {2}".format(appid, newuserid, comment[0])
                 self.cursor.execute(updatesql)
-                self.db.commit()
-            except MySQLdb.Error as e:
+                self.db.commit() 
+            except MySQLdb.Error as e: 
                 print ('update t{0} failed'.format(appid ))
                 delsql = 'delete from t{0} where id = {1}'.format(appid, comment[0])
                 self.cursor.execute(delsql)
@@ -873,16 +946,81 @@ class PergeUser(FetchJob):
         self.cursor.execute(sql)
         self.db.commit()  
 
+class PergeTComment(FetchJob):
+      
+    def get_unclean_appinfo(self, num=0):
+        """
+        1 取得未清洗的app信息
+        """
+        if num > 0:
+            sql = "select id from appinfo where clean=1 limit {0}".format(num)
+        else:
+            sql = "select id from appinfo where clean=1 " 
+        
+        self.cursor.execute(sql)
+        apps = self.cursor.fetchall()  
+        return apps
+
+    def get_comments(self, appid ):
+        """
+         
+        """
+        
+        sql = "select id, userid, name, updated,    title, rating, version, votesum,    votecount, contenthtml, content    from comment where appid={0}  " .format(appid)
+       
+        self.cursor.execute(sql)
+        comments = self.cursor.fetchall() 
+        counter = len(comments)
+        if counter > 0:
+            deletesql = """delete from t{0}""".format(appid)
+            self.cursor.execute(deletesql)
+            self.db.commit() 
+            insertsql = """insert into t{0} (userid, name, updated, title, rating, 
+                                            version, votesum, votecount, contenthtml, content) 
+                           values (%s, %s, %s, %s, %s, 
+                                  %s, %s, %s, %s, %s )""".format(appid)
+            comments_list = []
+            for comment in comments:
+                comments_list.append((comment[1], comment[2], comment[3], comment[4], comment[5], comment[6], comment[7], comment[8], comment[9], comment[10]))
+             
+            try: 
+                self.cursor.executemany(insertsql, comments_list)
+                self.db.commit()
+            except MySQLdb.IntegrityError  as e:
+                print ('update comment failed')
+        
+        return counter
+                 
+             
+    def update_appinfo(self, appid, counter):
+        """
+        4 将用户插入新用户表中
+        """ 
+        sql = "update appinfo set clean=0, counter={0} where id={1}".format(counter, appid)  
+        self.cursor.execute(sql )
+        self.db.commit() 
+from decorators import timelog
+@timelog
+def run():
+    pt = PergeTComment()  
+    apps = pt.get_unclean_appinfo(500)
+    for app in apps:
+        appid = app[0]
+        counter = pt.get_comments(appid)
+
+        pt.update_appinfo(appid, counter)
+        print(appid, counter)
 
 if __name__ == "__main__": 
+    run()
+     
+    """
     for i in range(0,10):
         while True:
             try:
-                fetch_new_without_thr(sql="clean =0 limit 2000", fake=False)
+                fetch_new_without_thr(sql="merged =1 and counter > 500 limit 2000", fake=False)
             except :
                 continue
             break
     
-    
-    
-    
+    """

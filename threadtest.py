@@ -5,6 +5,7 @@
 import threading
 import time
 import random
+import pdb
 
 lock = threading.Lock()
 
@@ -32,8 +33,12 @@ class MyThread(object):
             t.start()
         for t in ts:
             t.join()
+    
+    @classmethod
+    def clstest(cls):
+        pdb.set_trace()
+        print(cls.__dict__)
 
 if __name__ == "__main__":
-    mythread = MyThread()
-    mythread.run()
+    MyThread.clstest()
     print('end')

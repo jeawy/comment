@@ -14,6 +14,7 @@ from datetime import datetime
 
 import logging
 from applespider import Spider
+from decorators import timelog
 
 logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
                      filename='newapps.log', filemode='a+')
@@ -517,8 +518,7 @@ class FetchJob(FetchComment):
         fake 刷评检测标示
         """ 
         for appid in apps:  
-            if appid[1]:
-                
+            if appid[1]: 
                 self.init_read(appid[0], apptitle=appid[2], lastcomment_updated=appid[1], fake=fake)
             else:
                 self.create_tb(appid[0]) # 1 创建app的comment表
@@ -546,7 +546,9 @@ class FetchJob(FetchComment):
         lastcomment_updated 为app上次抓取到最新评论的时间,如果是首次抓取时，或者之前没有抓取到评论时，该值为None
         fake 刷评检测标志，如果fake为真时，则开启刷评检测
         """
-        
+        # 最有帮助的评论链接
+        mosthelpful = 'https://itunes.apple.com/rss/customerreviews/page=1/id=350962117/sortby=mosthelpful/xml?l=cn&&cc=cn'
+        # 最新评论的评论链接
         templateurl = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=cn&&cc=cn'
         ns = {
             'replace_w3org' : '{http://www.w3.org/2005/Atom}',
@@ -728,8 +730,8 @@ class FetchJob(FetchComment):
         else:
             self.update_appin_fetched(appid )
         
-        
-            
+        # 返回本次抓取的数量
+        return count    
 
     def find_duplicates(self):
         """查找所有有重复数据的table"""
@@ -794,22 +796,23 @@ def fetchedone(appid, fake=False):
 
     appinfo = f.get_app_comment_updated(appid)
     print(appinfo[0], appinfo[1])
-    
+    count = 0
     if appinfo[1]: 
-        f.init_read(appinfo[0], apptitle=appinfo[2], lastcomment_updated=appinfo[1], fake=fake)
+        count = f.init_read(appinfo[0], apptitle=appinfo[2], lastcomment_updated=appinfo[1], fake=fake)
     else:
         # 新来的app不对其进行刷评行为检测
         f.create_tb(appinfo[0]) # 1 创建app的comment表
-        f.init_read(appinfo[0], apptitle=appinfo[2])
+        count = f.init_read(appinfo[0], apptitle=appinfo[2])
 
- 
-    newcommentcount = spider.count_all_comments()
-    newusercount = spider.count_all_appleusers()
-    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
-                                  newuser=newusercount-oldusercount)
+    if count > 0: # 如果抓取的数量大于0，这时才有必要更新统计数据
+        newcommentcount = spider.count_all_comments()
+        newusercount = spider.count_all_appleusers()
+        spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                    newuser=newusercount-oldusercount)
     spider.close() 
     f.close()
 
+@timelog
 def fetchall(revert = False, num=None, sql=None):
     """重新抓取所有app的comment"""
     f = FetchJob()
@@ -825,10 +828,10 @@ def fetchall(revert = False, num=None, sql=None):
     if num:
         apps = apps[:num]
 
-    start = time.ctime()
+   
     length = len(apps)
     step = int(length/4)
-    print(step)
+
     ts = []
     spider = Spider()
     oldusercount = spider.count_all_appleusers()
@@ -851,10 +854,10 @@ def fetchall(revert = False, num=None, sql=None):
     spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
                                   newuser=newusercount-oldusercount)
  
-    print('start:', start)
-    print('end  :', time.ctime())
+   
     f.close()
 
+@timelog
 def fetchallwithout_thr(revert = False, num=None, sql=None):
     """无线程方式获取app"""
     f = FetchJob()
@@ -865,21 +868,19 @@ def fetchallwithout_thr(revert = False, num=None, sql=None):
         apps = f.get_appin_bysql(sql)
     else:
         apps = f.get_unfetched_appin() 
-    start = time.ctime()
+   
     
     ts = []
     spider = Spider()
     oldusercount = spider.count_all_appleusers()
     oldcommentcount = spider.count_all_comments()
-    f.runapps(apps)
-    print ('fetched done' )
+    f.runapps(apps) 
     newusercount = spider.count_all_appleusers()
     newcommentcount = spider.count_all_comments()
     spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
                                   newuser=newusercount-oldusercount)
  
-    print('start:', start)
-    print('end  :', time.ctime())
+
     f.close()
 def readlog():
     f = open('fetchapp.log', 'r')
@@ -922,7 +923,7 @@ def fetch_new_without_thr(revert = False, num=None, sql=None, fake=False):
     f.close()
 
 
-
+@timelog
 def fetch_new_without_thr_top(sql, num=None, fake=False ):
     """
     在top表中，无线程方式获取app
@@ -935,12 +936,8 @@ def fetch_new_without_thr_top(sql, num=None, fake=False ):
     if num:
         apps = apps[:num]
 
-    start = time.ctime() 
     for app in apps:
         fetchedone(app[0], fake=fake)
-    print ('fetched done' ) 
-    print('start:', start)
-    print('end  :', time.ctime())
     f.close()
 
 def fetchfakeapp(sql, fake=False):
@@ -972,14 +969,17 @@ def readlog():
             fetchedone(appid)
     f.close()
 if __name__ == "__main__":
+    """
     for i in range(1, 5):
         try:
             fetch_new_without_thr_top(sql="  counter  > 100  group by appid", fake=True )  
             break
         except :
             continue
+    """
+    fetch_new_without_thr_top(sql="  counter  > 100  group by appid", fake=True )  
     #fetchfakeapp(sql="")
-    #fetch_new_without_thr(sql="fetched =0", fake=False)
+    #fetch_new_without_thr(sql="fetched =0   ", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
     #fetch_new_without_thr(sql="category = 6015", fake=True)
     #fetchedone(350962117)
