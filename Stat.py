@@ -31,7 +31,7 @@ class Stat(FetchComment):
     COUNT = 20
     def __init__(self ): 
         logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='stat.log', filemode='a+')
+                     filename='log\\stat.log', filemode='a+')
          
         super(Stat, self).__init__()
      
@@ -111,7 +111,6 @@ if __name__ == "__main__":
     s.cal_count(day = -1)
     s.cal_count(day = -2)  
     s.cal_count(day = -3)
-    
-    
+    s.cal_count(day = -4) 
     s.close()
     

@@ -15,35 +15,28 @@ from datetime import datetime
 import logging
 from applespider import Spider
 from decorators import timelog
+from conn import ConnectDBA
 
 logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
                      filename='newapps.log', filemode='a+')
 
-class FetchComment(object):
+class FetchComment(ConnectDBA):
     """"""
     # 在(http://www.xicidaili.com/wt/)上面收集的ip用于测试
     # 没有使用字典的原因是 因为字典中的键是唯一的 http 和https 只能存在一个 所以不建议使用字典
-    pro = ['221.214.214.144:53281', '113.77.240.236:9797', '221.7.49.209:53281', '61.135.217.7']  
-    #pro = ['139.129.166.68:3128', '59.59.146.69:53281', '180.168.179.193:8080', '122.72.32.88', '183.190.74.185']  
-    #pro =['111.155.116.203:8123', '123.121.68.220:9000']
+    
     
     COUNT = 20
-    def __init__(self ):
-        #db = MySQLdb.connect(host="127.0.0.1",user="root",passwd="sqlroot",db="Comment",charset="utf8mb4") 
-        db = MySQLdb.connect(host="192.168.1.105",user="root",passwd="comment",db="comment",charset="utf8mb4") 
-        #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
-        self.db = db
-        self.cursor = self.db.cursor()
-       
-
+    def __init__(self ): 
+        
         userid_patter_str = '\d{5,}' #提取用户id的正则表达式
         self.userid_patter = re.compile(userid_patter_str)
         self.usernum = self.COUNT # 每20条写一次数据库　＃这个可以不用了，因为有ｅｘｃｕｔｅｍａｎｙ，执行的更快
         self.commentnum = self.COUNT # 每20条写一次数据库
+        super(FetchComment, self).__init__()
         
 
-    def close(self):
-        self.db.close()
+    
 
     def create_tb(self, appid):
         """如果table不存在则创建，为每个app创建一个表，共9万多个表，因为有9万多个APP"""
@@ -82,6 +75,7 @@ class FetchComment(object):
             votecount int,
             contenthtml text,
             content text,  
+            jieba tinyint default 0,
             PRIMARY KEY(id) ,
             UNIQUE KEY uniq_comment(updated, appid, userid)
         )ENGINE=myisam auto_increment=1 DEFAULT CHARSET=utf8mb4;""" 
@@ -142,7 +136,7 @@ class FetchComment(object):
         """
         放入appid和apptitle信息到刷评app池中
         """
-        sql = """insert into fakeapp (appid, title, date) values(%s, %s, %s)"""
+        sql = """insert into fakeapp (appid, title, date) values(%s, %s, %s) on duplicate key update hot = hot + 1, title =values(title) """
         now = datetime.today().date()
         try:
             self.cursor.execute(sql, (appid, apptitle, now))
@@ -217,6 +211,7 @@ class FetchComment(object):
 
         try:  
             self.cursor.executemany(inserttotalsql, comments) 
+            # 暂时先不插入分表了
             self.cursor.executemany(insertsql, comments_t) 
             self.db.commit()  
         except MySQLdb.Error as e:
@@ -517,13 +512,22 @@ class FetchJob(FetchComment):
         多线程方式
         fake 刷评检测标示
         """ 
+        spider = Spider()  
         for appid in apps:  
+            oldusercount = spider.count_all_appleusers()
+            oldcommentcount = spider.count_all_comments()
             if appid[1]: 
-                self.init_read(appid[0], apptitle=appid[2], lastcomment_updated=appid[1], fake=fake)
+                counter = self.init_read(appid[0], apptitle=appid[2], lastcomment_updated=appid[1], fake=fake)
             else:
                 self.create_tb(appid[0]) # 1 创建app的comment表
-                self.init_read(appid[0])
+                counter = self.init_read(appid[0])
+            if counter > 0:
+                newusercount = spider.count_all_appleusers()
+                newcommentcount = spider.count_all_comments()
+                spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
+                                            newuser=newusercount-oldusercount)
             print(appid[0], appid[2], 'comment fetched')
+        spider.close()
 
     def runfetch(self):
         """
@@ -908,15 +912,10 @@ def fetch_new_without_thr(revert = False, num=None, sql=None, fake=False):
     start = time.ctime()
     
     ts = []
-    spider = Spider()
-    oldusercount = spider.count_all_appleusers()
-    oldcommentcount = spider.count_all_comments()
+ 
     f.runapps(apps, fake=fake)
     print ('fetched done' )
-    newusercount = spider.count_all_appleusers()
-    newcommentcount = spider.count_all_comments()
-    spider.insert_stat_newfetched(newcomment=newcommentcount-oldcommentcount, 
-                                  newuser=newusercount-oldusercount)
+  
  
     print('start:', start)
     print('end  :', time.ctime())
@@ -977,15 +976,15 @@ if __name__ == "__main__":
         except :
             continue
     """
-    fetch_new_without_thr_top(sql="  counter  > 100  group by appid", fake=True )  
+    fetch_new_without_thr_top(sql="counter > 100  group by appid", fake=True )  
     #fetchfakeapp(sql="")
-    #fetch_new_without_thr(sql="fetched =0   ", fake=False)
+    #fetch_new_without_thr(sql="counter < 2000  and counter > 500 ", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
     #fetch_new_without_thr(sql="category = 6015", fake=True)
-    #fetchedone(350962117)
+    #fetchedone(1069297969)
     #f = FetchJob()
     #f.create_newappleuser_tb()
-    #f.insert_fakeapp(123, 'test') 
+    #f.insert_fakeapp(342994828, '腾讯斗地主') 
     #fetch_new_without_thr(sql='fetched = 2')
     #f.close()
     #readlog()

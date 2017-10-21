@@ -39,6 +39,17 @@ class MyThread(object):
         pdb.set_trace()
         print(cls.__dict__)
 
+
+def testyield(j):
+    i = 0
+    k = 0
+    while i < j:
+        k = (yield i)
+        print(k)
+        i+=1
 if __name__ == "__main__":
-    MyThread.clstest()
-    print('end')
+    gen = testyield(3)
+    next(gen)
+    gen.send(2)
+    next(gen)
+     

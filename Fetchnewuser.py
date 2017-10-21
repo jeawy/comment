@@ -15,8 +15,7 @@ from datetime import datetime
 import logging
 from applespider import Spider
 
-logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='newapps.log', filemode='a+')
+
 
 class FetchComment(object):
     """"""
@@ -28,9 +27,11 @@ class FetchComment(object):
     
     COUNT = 20
     def __init__(self ):
+        logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
+                     filename='log\\newapps.log', filemode='a+')
         #db = MySQLdb.connect(host="127.0.0.1",user="root",passwd="sqlroot",db="Comment",charset="utf8mb4") 
-        db = MySQLdb.connect(host="192.168.1.105",user="root",passwd="comment",db="comment",charset="utf8mb4") 
         #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
+        db = MySQLdb.connect(host="localhost",user="root",passwd="sqlroot",db="comment_zh",charset="utf8mb4") 
         self.db = db
         self.cursor = self.db.cursor()
        
@@ -953,9 +954,9 @@ class PergeTComment(FetchJob):
         1 取得未清洗的app信息
         """
         if num > 0:
-            sql = "select id from appinfo where clean=1 limit {0}".format(num)
+            sql = "select id from appinfo where clean=3 limit {0}".format(num)
         else:
-            sql = "select id from appinfo where clean=1 " 
+            sql = "select id from appinfo where clean=3 " 
         
         self.cursor.execute(sql)
         apps = self.cursor.fetchall()  
@@ -1003,7 +1004,7 @@ from decorators import timelog
 @timelog
 def run():
     pt = PergeTComment()  
-    apps = pt.get_unclean_appinfo(500)
+    apps = pt.get_unclean_appinfo(2000)
     for app in apps:
         appid = app[0]
         counter = pt.get_comments(appid)

@@ -11,29 +11,26 @@ from lxml import etree
 import MySQLdb
 import logging
 from datetime import datetime
+from conn import ConnectDBA
 
 
-logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='fetchapp.log', filemode='a+')
 
 
-class Spider(object):
+class Spider(ConnectDBA):
     
     def __init__(self):
+        logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
+                     filename='log\\fetchapp.log', filemode='a+')
 
         self.category_json = []
         self.categoryitem = {}
 
         self.subcategory_json = []
         self.subcategoryitem = {}
-        db = MySQLdb.connect(host="192.168.1.105",user="root",passwd="comment",db="comment",charset="utf8mb4") 
-        #db = MySQLdb.connect(host="localhost",user="root",passwd="sqlroot",db="comment",charset="utf8mb4") 
-        #db = MySQLdb.connect("localhost", 'root', 'sqlroot', 'Comment', 'utf8')
-        self.db = db
-        self.cursor = self.db.cursor() 
+
         self.insertnum = 50 #
-    def close(self):
-        self.db.close()
+        super(Spider, self).__init__()
+    
     def create_category_tb(self):
         """创建分类信息表"""
         sql = """create table if not exists category(

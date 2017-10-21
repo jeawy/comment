@@ -5,7 +5,7 @@ from decorators import timelog
 
 @timelog
 def run():
-    fetch_new_without_thr(sql="fetched = 2 and counter > 10", fake=True)
+    fetch_new_without_thr(sql="fetched = 2 and counter > 50", fake=True)
 if __name__ == "__main__": 
     run()
  
