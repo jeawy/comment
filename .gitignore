@@ -4,3 +4,4 @@
 *.docx
 *.docs
 proxytest.py
+*.tmp

@@ -3,6 +3,6 @@
 from FetchComment import fetch_new_without_thr_top
     
 if __name__ == "__main__": 
-    fetch_new_without_thr_top(sql="counter <= 100  group by appid order by counter desc", fake=True )
+    fetch_new_without_thr_top(sql="counter <= 60  and counter > 40 group by appid order by counter desc", fake=True )
           
  
