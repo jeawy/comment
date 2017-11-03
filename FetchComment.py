@@ -308,36 +308,7 @@ class FetchComment(ConnectDBA):
         sql = """update  appinfo set merged = 1, counter={0} where id = {1}""".format(counter, appid) 
         self.cursor.execute(sql)
         self.db.commit()
-
-    
-        
-
-    def read_everyday(self, appid):
-        """
-            每天都抓取，碰到日期小于昨天的记录就停止抓取
-            # appinfo表中会记录最新一条评论的时间
-        """ 
-        url = 'https://itunes.apple.com/rss/customerreviews/page={0}/id={1}/sortby=mostrecent/xml?l=en&&cc=cn'
-        replace_w3org = '{http://www.w3.org/2005/Atom}'
-        replace_apple = '{http://itunes.apple.com/rss}' 
-        count = 0
-        for pagei in range(1, 10):
-            url = url.format(pagei, appid)
-            results_xml = requests.get(url)
-            results_text = results_xml.content
-            root = ET.fromstring(results_text)
-          
-            for entries in root.iter('{http://www.w3.org/2005/Atom}entry'): 
-                for entry in  entries: 
-                    tag = entry.tag.replace(replace_apple,'')
-                    tag = tag.replace(replace_w3org,'')
-                    count += 1
-                    if tag =='author': 
-                        print(count, tag, entry.find('name').text)
-                    if tag =='im': 
-                
-                        pass
-    
+ 
     def get_unfetched_appin(self): 
         """获取还未抓取的appid"""
         sql = """select id , comment_updated, title from appinfo where fetched = 0"""  
@@ -373,14 +344,14 @@ class FetchComment(ConnectDBA):
         apps = self.cursor.fetchall() 
         return apps
     
-    def update_appin_fetched(self, appid, comment_updated=''): 
+    def update_appin_fetched(self, appid, url, comment_updated=''): 
         """
         更新app，fetch=1， 表示已经抓取完了
         """ 
         if len(comment_updated) > 0:
-            sql = """update  appinfo set fetched = 1, comment_updated="{0}" where id = {1}""".format( comment_updated, appid) 
+            sql = """update  appinfo set fetched = 1, url = '{2}', comment_updated="{0}" where id = {1}""".format( comment_updated, appid, url) 
         else:
-            sql = """update  appinfo set fetched = 1 where id = {0}""".format(appid) 
+            sql = """update  appinfo set fetched = 1, url = '{1}' where id = {0}""".format(appid, url) 
      
         self.cursor.execute(sql)
         self.db.commit()
@@ -394,9 +365,7 @@ class FetchComment(ConnectDBA):
         self.cursor.execute(sql, (appinfo['content'], appinfo['artist'], appinfo['icon100']))
         self.db.commit()
 
-          
-    
-
+           
     def get_all_appin(self): 
         """获取所有appid"""
         sql = """select id, title  from appinfo"""
@@ -450,7 +419,7 @@ class FetchJob(FetchComment):
     def get_appinfo_internet(self, appid ):
         """从api中获取appinfo的icon、content和artist数据"""
         
-        templateurl = 'https://itunes.apple.com/rss/customerreviews/page=1/id={0}/sortby=mostrecent/xml?l=en'
+        templateurl = 'https://itunes.apple.com/rss/customerreviews/page=1/id={0}/sortby=mostrecent/xml?l=cn&&cc=cn'
         ns = {
             'replace_w3org' : '{http://www.w3.org/2005/Atom}',
             'replace_apple': '{http://itunes.apple.com/rss}' 
@@ -529,7 +498,7 @@ class FetchJob(FetchComment):
             print(appid[0], appid[2], 'comment fetched')
         spider.close()
 
-    def runfetch(self):
+    def fetch_appinfo(self):
         """
         更新appinfo的icon、description等信息
         """
@@ -562,6 +531,9 @@ class FetchJob(FetchComment):
         items = [] # comment记录
         items_t = [] # t23893238239记录
         users = [] # 评论用户
+
+        appurl = '' # app的url
+        newtitle = '' # app的新title
         
         comment_updated = '' #最新评论时间
 
@@ -587,7 +559,6 @@ class FetchJob(FetchComment):
             
             try:
                 root = ET.fromstring(results_text )
-               
             except ET.ParseError:
                 # 如果第一页有问题，就可能导致comment_update不能更新
                 continue # xml文件本身有问题
@@ -613,6 +584,17 @@ class FetchJob(FetchComment):
                     break
                 entry_count += 1
                 if entry_count ==1:
+                    # 第一个entry是app信息 抓取app的信息之后，跳过
+                    # 抓取app的信息：title ，artistname，url
+                    if pagei == page_lastest_comment:
+                        # 在第一页，查找appinfo
+                        for entry in  entries:
+                            tag = entry.tag.replace(ns['replace_apple'],'')
+                            tag = tag.replace(ns['replace_w3org'],'')
+ 
+                            if tag == 'id' : 
+                                appurl = entry.text 
+
                     continue # 第一个entry是app信息 跳过
 
                 itementry = {} 
@@ -719,20 +701,22 @@ class FetchJob(FetchComment):
             if count == 0: # 没有抓取到数据，不需要继续往后走了
                 break
         # 数据已全部抓取完毕，更新appinof表的counter字段 
-       
+         
+        
         if count > 0:   
             self.insertmany_appleuser_tb(users)
             self.insertmany_comment_tb(appid, items, items_t)
             self.add_comment_couter(count, appid) 
          
-            self.update_appin_fetched(appid, comment_updated)
+            self.update_appin_fetched(appid, appurl, comment_updated)
             print(appid, count, apptitle)
             if fake and count > 300: # 刷评检测开启，本次抓取的时候超过400
                 # 将app放入刷评app池
                 self.insert_fakeapp(appid, apptitle)
 
         else:
-            self.update_appin_fetched(appid )
+            self.update_appin_fetched(appid, appurl)
+         
         
         # 返回本次抓取的数量
         return count    
@@ -976,12 +960,12 @@ if __name__ == "__main__":
         except :
             continue
     """
-    fetch_new_without_thr_top(sql="counter > 100  group by appid", fake=True )  
+    fetch_new_without_thr_top(sql=" counter > 300  group by appid", fake=True )  
     #fetchfakeapp(sql="")
     #fetch_new_without_thr(sql="counter < 2000  and counter > 500 ", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
     #fetch_new_without_thr(sql="category = 6015", fake=True)
-    #fetchedone(1069297969)
+    #fetchedone(460305965) #548608066fe
     #f = FetchJob()
     #f.create_newappleuser_tb()
     #f.insert_fakeapp(342994828, '腾讯斗地主') 

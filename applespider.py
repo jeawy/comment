@@ -61,10 +61,11 @@ class Spider(ConnectDBA):
         sql = """create table if not exists apptitle (
                     id int(32) not null auto_increment,
                     appid int,
-                    title varchar(100),
+                    title varchar(256),
+                    version varchar(100),
                     updated date,
                     primary key (id),
-                    unique key apptitleindex(appid, title)
+                    index apptitleindex(appid, title)
                 ) engine=myisam auto_increment=1 default charset=utf8;
               """
         self.cursor.execute(sql)
@@ -203,6 +204,7 @@ class Spider(ConnectDBA):
             description text,
             seller varchar(1024),
             artistname varchar(1024),
+            url varchar(2048),
             icon100 varchar(4096),
             category int(32),
             fetched boolean default 0,
@@ -367,6 +369,24 @@ class SpiderRun(Spider):
             print(count, appid, title, categoryid)
              
         self.insertmany_appinfo(apps)
+    
+    def analyse_appinfo(self, url):
+        """
+        获取app的title\version
+        """ 
+        response = requests.get(url)
+        tree = html.fromstring(response.content)
+        titles = tree.xpath('//h1[contains(@itemprop, "name")]')
+        title = ''
+        if titles:
+            title = titles[0].text
+        versions = tree.xpath('//span[contains(@itemprop, "softwareVersion")]')
+        version = ''
+        if versions:
+            version = versions[0].text
+        
+        return (version, title)
+
     def re_fetch_all_category_apps(self):
         self.revert_category_fetched()
         # 获取还没有抓取过app的分类 
@@ -405,8 +425,10 @@ class SpiderRunTest(SpiderRun):
             self.insert_stat_newfetched(newapp=count)
         
         print (newcount, oldcount)
+
 if __name__=="__main__":
     spider = SpiderRun()
-    spider.get_daily_hot_apps()
-    spider.re_fetch_all_category_apps()
+    #spider.get_daily_hot_apps()
+    #spider.re_fetch_all_category_apps()
+    spider.analyse_appinfo('')
     spider.close()
