@@ -13,6 +13,10 @@ class CommentJiebaDB(ConnectDBA):
     """
     STOP_WORDS = 0
     COMPONENT_WORDS = 1
+    STOPWORDS_FILE = 'stopwords.txt'
+    COMPONENT_FILE = 'component.txt'
+    KEYWORD_FILE = 'keywords.txt'
+
 
     def create_kw(self):
         """
@@ -23,6 +27,7 @@ class CommentJiebaDB(ConnectDBA):
                   id int(32) not null auto_increment,
                   keyword varchar(64),
                   counter int default 1,
+                  mark int default 0,
                   primary key (id),
                   unique index kw_index (keyword)
               )engine=myisam auto_increment = 1 default charset = utf8;
@@ -39,6 +44,7 @@ class CommentJiebaDB(ConnectDBA):
                   id int(32) not null auto_increment,
                   keyword varchar(64),
                   counter int default 1,
+                  mark int default 0,
                   primary key (id),
                   unique index kw_index (keyword)
               )engine=myisam auto_increment = 1 default charset = utf8;
@@ -109,7 +115,13 @@ class CommentJiebaDB(ConnectDBA):
         self.cursor.execute(sql)
         self.db.commit()
     
-    def update_dict(self, dict_type = STOP_WORDS):
+    
+
+class UpdateKw(CommentJiebaDB):
+    """
+    更新词库
+    """
+    def update_dict(self, dict_type = CommentJiebaDB.STOP_WORDS):
         """
         从stopwords.txt中更新无效词/停用词库
         或
@@ -119,9 +131,9 @@ class CommentJiebaDB(ConnectDBA):
         dict_type = 1时，更新的是组合词库
         """
         if dict_type == self.STOP_WORDS:
-            f = codecs.open('stopwords.txt', 'r', 'utf-8') # 停用词库
+            f = codecs.open(self.STOPWORDS_FILE, 'r', 'utf-8') # 停用词库
         else:
-            f = codecs.open('component.txt', 'r', 'utf-8') # 组合词库
+            f = codecs.open(self.COMPONENT_FILE, 'r', 'utf-8') # 组合词库
         
         if f:
             content = f.read() 
@@ -137,10 +149,38 @@ class CommentJiebaDB(ConnectDBA):
             f.close()
         else:
             print("ERROR: Can not find the files...")
+    
+    def read_kw(self, kw_tb="kw_search"):
+        """
+        从kw表或者kw_search表中读取未归类的数据
+        当kw_tb == kw的时候，从kw表中读取，否则从kw_search表中读取
+        """
+        
+        sql = "select keyword, id from {0} where mark = 0 limit 10000".format(kw_tb)
+        try:
+            self.cursor.execute(sql)
+            keywords = self.cursor.fetchall()
+            content = ''
+            for keyword in keywords:
+                content = content+','+keyword[0] 
+            
+            f = codecs.open(self.KEYWORD_FILE, 'a', 'utf-8') # 组合词库
+            f.write(content)
+            f.close()
 
+            ids = [kw[1] for kw in keywords]
+            print(tuple(ids))
 
+            # 更新数据库
+            updatesql = "update {0} set mark = 1 where id in {1}".format(kw_tb, tuple(ids))
+            self.cursor.execute(updatesql)
+            self.db.commit() 
+        except MySQLdb.Error as e: 
+            print ('ERROR: read_kw:{0}.'.format(str(e))) 
     
 if __name__ == "__main__":
-    cjd = CommentJiebaDB()
-    cjd.update_dict()
+    cjd = UpdateKw()
+    #cjd.update_dict() # 停用词更新
+    cjd.read_kw()
+    #cjd.update_dict(cjd.COMPONENT_WORDS) # 更新组合词
     cjd.close()

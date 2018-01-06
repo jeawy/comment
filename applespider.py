@@ -430,5 +430,6 @@ if __name__=="__main__":
     spider = SpiderRun()
     #spider.get_daily_hot_apps()
     #spider.re_fetch_all_category_apps()
-    spider.analyse_appinfo('')
+    #spider.analyse_appinfo('')
+    spider.insert_appinfo(id=1217733297, name='单机游戏 - 王者枪战游戏大全', categoryid=6014)
     spider.close()

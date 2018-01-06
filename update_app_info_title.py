@@ -129,5 +129,9 @@ def runtest():
     f.close()
 
 if __name__ == "__main__": 
-    run()
+    for i in range(1, 8):
+        try:
+            run()
+        except Exception as e:
+            print (e)
     

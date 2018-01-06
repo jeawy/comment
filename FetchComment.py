@@ -196,12 +196,35 @@ class FetchComment(ConnectDBA):
             self.commentnum = self.COUNT
         else:
             self.commentnum -= 1
-    
+
+    def insert_comment_tb_tmp(self, appid,  **kwargs):
+        """向每个app的评论是单独分开的，本函数是为某个app的comment表中插入数据"""
+        
+        insertcommentsql = """insert  into comment(appid, userid, name, updated, title, rating, version, votesum, votecount, content) 
+                       values (%s, %s, "%s",%s, "%s",  %s,%s,%s,%s,%s)"""
+ 
+        try: 
+            self.cursor.execute(insertcommentsql, (appid, kwargs['userid'], kwargs['name'],kwargs['updated'],
+                                        kwargs['title'], kwargs['rating'], kwargs['version'], kwargs['voteSum'],
+                                        kwargs['voteCount'],   kwargs['content']))
+        except MySQLdb.Error as e:
+            self.db.rollback() 
+            print ('insert:{} exist failed.'.format(str(e)))
+        except KeyError as e:
+            self.db.rollback() 
+            print ('insert:{} exist failed.'.format(str(e)))
+        
+        if self.commentnum <=0:
+            self.db.commit()
+            self.commentnum = self.COUNT
+        else:
+            self.commentnum -= 1
+
     def insertmany_comment_tb(self, appid, comments,comments_t):
         """向每个app的评论是单独分开的，本函数是为某个app的comment表中插入数据"""
        
          
-        inserttotalsql = """insert ignore  into comment(appid, userid, name, updated, title, 
+        inserttotalsql = """insert  ignore into comment(appid, userid, name, updated, title, 
                             rating, version, votesum, votecount, content ) 
                             values (%s, %s,%s,%s,%s, %s,%s,%s,%s,%s)"""
 
@@ -211,8 +234,9 @@ class FetchComment(ConnectDBA):
 
         try:  
             self.cursor.executemany(inserttotalsql, comments) 
+        
             # 暂时先不插入分表了
-            self.cursor.executemany(insertsql, comments_t) 
+            #self.cursor.executemany(insertsql, comments_t) 
             self.db.commit()  
         except MySQLdb.Error as e:
             self.db.rollback() 
@@ -960,13 +984,26 @@ if __name__ == "__main__":
         except :
             continue
     """
-    fetch_new_without_thr_top(sql=" counter > 300  group by appid", fake=True )  
+    #fetch_new_without_thr_top(sql=" counter > 300  group by appid", fake=True )  
     #fetchfakeapp(sql="")
     #fetch_new_without_thr(sql="counter < 2000  and counter > 500 ", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
     #fetch_new_without_thr(sql="category = 6015", fake=True)
-    #fetchedone(460305965) #548608066fe
-    #f = FetchJob()
+    #fetchedone(281796108) #548608066fe
+    #insertcommentsql = """insert ignore into comment(appid, userid, name, updated, title, rating, version, votesum, votecount, content) 
+    #                   values (%s, %s, "%s",%s, "%s",  %s,%s,%s,%s,%s)"""
+    """
+    f = FetchJob()
+    ark={'userid':1234567, 
+          'name':'zhangjiwei', 
+          'updated':'2017-12-29 12:34:56', 
+          'title':'test', 
+          'rating':5, 
+          'version':'1.1', 
+          'voteSum':10, 
+          'voteCount':23, 'content':'this is test'}
+    f.insert_comment_tb_tmp(281796108, **ark)
+    """
     #f.create_newappleuser_tb()
     #f.insert_fakeapp(342994828, '腾讯斗地主') 
     #fetch_new_without_thr(sql='fetched = 2')
