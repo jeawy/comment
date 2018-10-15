@@ -377,6 +377,7 @@ class SpiderRun(Spider):
         response = requests.get(url)
         tree = html.fromstring(response.content)
         titles = tree.xpath('//h1[contains(@itemprop, "name")]')
+        pdb.set_trace()
         title = ''
         if titles:
             title = titles[0].text
@@ -428,8 +429,9 @@ class SpiderRunTest(SpiderRun):
 
 if __name__=="__main__":
     spider = SpiderRun()
+    spider.create_title_tb()
     #spider.get_daily_hot_apps()
     #spider.re_fetch_all_category_apps()
     #spider.analyse_appinfo('')
-    spider.insert_appinfo(id=1217733297, name='单机游戏 - 王者枪战游戏大全', categoryid=6014)
+    #spider.insert_appinfo(id=1217733297, name='单机游戏 - 王者枪战游戏大全', categoryid=6014)
     spider.close()

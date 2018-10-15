@@ -3,22 +3,26 @@
 import requests
 import xml.etree.ElementTree as ET
 from lxml import etree
+from lxml import html 
 import pdb
 import MySQLdb
 import re
 import time
 import threading
 import random
-
+import os
 from datetime import datetime
 
 import logging
 from applespider import Spider
+from update_app_info_title import FetchAppinfo
+
 from decorators import timelog
 from conn import ConnectDBA
-
+fileos = os.path.dirname(os.path.realpath(__file__))
+print(fileos)
 logging.basicConfig(level=logging.INFO, datefmt='%a, %d %b %Y %H:%M:%S', 
-                     filename='newapps.log', filemode='a+')
+                     filename= os.path.join(fileos,'newapps.log'), filemode='a+')
 
 class FetchComment(ConnectDBA):
     """"""
@@ -98,6 +102,22 @@ class FetchComment(ConnectDBA):
         
         self.cursor.execute(createsql)
         self.db.commit()
+    
+    def create_appinstore_record_tb(self):
+        """
+        APP 在apple store的上下架记录
+        mark = 0 记录下架信息
+        mark = 1 记录上架信息
+        """
+        createsql = """CREATE TABLE if not exists appinstore_record( 
+                                              id int(32) NOT NULL auto_increment,
+                                              appid int, 
+                                              updated datetime, 
+                                              mark int,
+                                              PRIMARY KEY(id))ENGINE=myisam auto_increment=1 DEFAULT CHARSET=utf8mb4;""" 
+        
+        self.cursor.execute(createsql)
+        self.db.commit()
 
     def create_newappleuser_tb(self):
         """新appleuserchuser表，之前那个appleuser表的id弄错了，旧表会逐渐移到新表中"""
@@ -108,6 +128,14 @@ class FetchComment(ConnectDBA):
         
         self.cursor.execute(createsql)
         self.db.commit()
+    
+    def create_tables(self):
+        """
+        系统初始化的时候调用该函数创建数据库表
+        """
+
+        # 创建app上架下架记录表
+        self.create_appinstore_record_tb()
 
     def revert_appinfo_fetched(self): 
         """将所有app设置成为未抓取状态，以便每天定时重新抓取"""
@@ -368,14 +396,20 @@ class FetchComment(ConnectDBA):
         apps = self.cursor.fetchall() 
         return apps
     
-    def update_appin_fetched(self, appid, url, comment_updated=''): 
+    def update_appin_fetched(self, appid, url, comment_updated='' , newapptitle = False): 
         """
         更新app，fetch=1， 表示已经抓取完了
         """ 
-        if len(comment_updated) > 0:
-            sql = """update  appinfo set fetched = 1, url = '{2}', comment_updated="{0}" where id = {1}""".format( comment_updated, appid, url) 
+        if newapptitle:
+            if len(comment_updated) > 0:
+                sql = """update  appinfo set fetched = 1, url = '{2}', title = '{3}', comment_updated="{0}" where id = {1}""".format( comment_updated, appid, url, newapptitle) 
+            else:
+                sql = """update  appinfo set fetched = 1, url = '{1}' , title = '{2}' where id = {0}""".format(appid, url, newapptitle)
         else:
-            sql = """update  appinfo set fetched = 1, url = '{1}' where id = {0}""".format(appid, url) 
+            if len(comment_updated) > 0:
+                sql = """update  appinfo set fetched = 1, url = '{2}', comment_updated="{0}" where id = {1}""".format( comment_updated, appid, url) 
+            else:
+                sql = """update  appinfo set fetched = 1, url = '{1}' where id = {0}""".format(appid, url) 
      
         self.cursor.execute(sql)
         self.db.commit()
@@ -439,6 +473,7 @@ class FetchJob(FetchComment):
                 print(app[0], 'deleted')
             except MySQLdb.Error as e:
                 logging.error(e) 
+            
 
     def get_appinfo_internet(self, appid ):
         """从api中获取appinfo的icon、content和artist数据"""
@@ -494,8 +529,7 @@ class FetchJob(FetchComment):
             
             if appid[1]: 
                 self.init_read(appid[0], apptitle=appid[2],lastcomment_updated=appid[1])
-            else:
-                self.create_tb(appid[0]) # 1 创建app的comment表
+            else: 
                 self.init_read(appid[0])
             
             print(appid[0], appid[1], appid[2], 'comment fetched')
@@ -511,9 +545,8 @@ class FetchJob(FetchComment):
             oldcommentcount = spider.count_all_comments()
             if appid[1]: 
                 counter = self.init_read(appid[0], apptitle=appid[2], lastcomment_updated=appid[1], fake=fake)
-            else:
-                self.create_tb(appid[0]) # 1 创建app的comment表
-                counter = self.init_read(appid[0])
+            else: 
+                counter = self.init_read(appid[0], apptitle=appid[2] )
             if counter > 0:
                 newusercount = spider.count_all_appleusers()
                 newcommentcount = spider.count_all_comments()
@@ -535,7 +568,49 @@ class FetchJob(FetchComment):
                 self.update_appin_basic(appid, infos) 
                 print(appid, appid[1], 'updated')
 
-   
+    
+    def update_appinstore_record(self, appid, mark):
+        """
+        更新app 在apple store上的状态：上架还是下架
+        """
+        today = datetime.today()  
+        get_last_record_sql = "select appid, mark from appinstore_record where appid={0} order by id desc limit 1".format(appid)
+        insert_app_record_sql = "insert into appinstore_record (appid, mark, updated) values ({0}, {1}, '{2}')"
+        self.cursor.execute(get_last_record_sql)
+        apps = self.cursor.fetchall() 
+        
+        numbers = len(apps)
+        if numbers == 0: 
+            insert_app_record_sql = insert_app_record_sql.format(appid, mark, today)
+            self.cursor.execute(insert_app_record_sql)
+            self.db.commit()
+        elif numbers == 1: 
+            if apps[0][1] != mark:
+                insert_app_record_sql = insert_app_record_sql.format(appid, mark, today)
+                self.cursor.execute(insert_app_record_sql)
+                self.db.commit()
+
+        return apps
+
+    def get_app_title(self, appid):
+        """
+        在 app的介绍页中获取app的最新title
+        """
+        appurl = "https://itunes.apple.com/cn/app//id{0}?mt=8&ign-mpt=uo%3D2".format(appid)
+        apppage = requests.get(appurl, proxies={'http':random.choice(self.pro)}) 
+        if apppage.status_code == 403:
+            return ''
+        
+        tree = html.fromstring(apppage.content)
+        results = tree.xpath('//h1[contains(@class, "product-header__title app-header__title")]')
+      
+        titles = [title for title in results] 
+        if titles:
+            title = titles[0].text.strip()
+            print(str(appid) + " : " + title)
+            return title
+        else:
+            return ''
 
     def init_read(self, appid, apptitle='', lastcomment_updated=None, fake=False):
         """
@@ -567,6 +642,12 @@ class FetchJob(FetchComment):
         # 最新评论默认在第1页，但是当第一页出现page error时，最新评论应该出现在下一页
         page_lastest_comment = 1
         page_lastest_comment_mark = False # 代表是否被更新过，更新过之后，该值为True
+        appversion = ""
+ 
+        new_apptitle = self.get_app_title(appid)
+        #  app上下架记录标记
+        #  默认是被下架的APP
+        appinstore_record_mark = 0 
 
         for pagei in range(1, 11):
 
@@ -580,7 +661,7 @@ class FetchJob(FetchComment):
                 return
 
             results_text = results_xml.content.decode('utf-8', 'ignore')
-            
+          
             try:
                 root = ET.fromstring(results_text )
             except ET.ParseError:
@@ -603,10 +684,12 @@ class FetchJob(FetchComment):
             version = ''
             entry_count = 0
             for entries in root.iter(ns['replace_w3org']+'entry'): 
-
+               
                 if breakmark:
                     break
                 entry_count += 1
+                appinstore_record_mark = 1 
+                """
                 if entry_count ==1:
                     # 第一个entry是app信息 抓取app的信息之后，跳过
                     # 抓取app的信息：title ，artistname，url
@@ -618,9 +701,10 @@ class FetchJob(FetchComment):
  
                             if tag == 'id' : 
                                 appurl = entry.text 
-
+                            if tag == 'name' : 
+                                new_apptitle = entry.text
                     continue # 第一个entry是app信息 跳过
-
+                """
                 itementry = {} 
                 user = {}   
                 for entry in  entries:  
@@ -628,15 +712,6 @@ class FetchJob(FetchComment):
                     tag = tag.replace(ns['replace_w3org'],'')
                     
                     if tag == 'id' : # 这里的id是comment id
-                        """
-                        match = self.userid_patter.match(entry.text)
-                        if match: 
-                            userid = match.group() 
-                            itementry['userid'] = userid # 用户id
-                            user['userid'] = userid
-                        else:  
-                            break # 非用户评论
-                        """
                         pass 
                     if tag =='author':  
                         for name in entry.iter(ns['replace_w3org']+'name'):
@@ -652,7 +727,13 @@ class FetchJob(FetchComment):
                                 itementry['userid'] = userid # 用户id
                                 user['userid'] = userid
                             else:  
-                                break # 非用户评论      
+                                break # 非用户评论 
+                    if  tag=='version': 
+                        version = entry.text
+                        if pagei == 1:
+                            appversion = version
+                        itementry['version'] = version # 应用版本
+                             
                     if tag =='updated':
                         
                         updated = entry.text[:19].replace('T', ' ')
@@ -695,15 +776,13 @@ class FetchJob(FetchComment):
                     
                     if  tag=='voteSum': 
                         voteSum = entry.text
-                        itementry['voteSum'] = voteSum # 不知道是什么
+                        itementry['voteSum'] = voteSum #  
 
                     if  tag=='voteCount': 
                         voteCount = entry.text
-                        itementry['voteCount'] = voteCount # 不知道是什么
+                        itementry['voteCount'] = voteCount #  
 
-                    if  tag=='version': 
-                        version = entry.text
-                        itementry['version'] = version # 应用版本
+                    
                       
                 # 将apple用户+新提取的评论插入数据库
                 if userid and authorname and not breakmark:
@@ -731,17 +810,31 @@ class FetchJob(FetchComment):
             self.insertmany_appleuser_tb(users)
             self.insertmany_comment_tb(appid, items, items_t)
             self.add_comment_couter(count, appid) 
+            appinstore_record_mark = 1
          
             self.update_appin_fetched(appid, appurl, comment_updated)
             print(appid, count, apptitle)
+              
             if fake and count > 300: # 刷评检测开启，本次抓取的时候超过400
                 # 将app放入刷评app池
                 self.insert_fakeapp(appid, apptitle)
 
         else:
             self.update_appin_fetched(appid, appurl)
-         
         
+        # 更新app上下架记录 
+        self.update_appinstore_record(appid, appinstore_record_mark)
+
+
+        if new_apptitle != apptitle and new_apptitle != '': 
+            # 跟踪标题修改记录 
+            print('OLD : ' + apptitle + ' NEW: ' + new_apptitle)
+            f = FetchAppinfo() 
+            f.get_latest_title(appid=appid, version=appversion, title=new_apptitle)
+            f.update_appin(appid, new_apptitle) 
+            f.close()
+
+
         # 返回本次抓取的数量
         return count    
 
@@ -813,7 +906,7 @@ def fetchedone(appid, fake=False):
         count = f.init_read(appinfo[0], apptitle=appinfo[2], lastcomment_updated=appinfo[1], fake=fake)
     else:
         # 新来的app不对其进行刷评行为检测
-        f.create_tb(appinfo[0]) # 1 创建app的comment表
+        #f.create_tb(appinfo[0]) # 1 创建app的comment表
         count = f.init_read(appinfo[0], apptitle=appinfo[2])
 
     if count > 0: # 如果抓取的数量大于0，这时才有必要更新统计数据
@@ -917,6 +1010,7 @@ def fetch_new_without_thr(revert = False, num=None, sql=None, fake=False):
         apps = f.get_appin_bysql(sql)
     else:
         apps = f.get_unfetched_appin() 
+     
     start = time.ctime()
     
     ts = []
@@ -942,7 +1036,7 @@ def fetch_new_without_thr_top(sql, num=None, fake=False ):
      
     if num:
         apps = apps[:num]
-
+    
     for app in apps:
         fetchedone(app[0], fake=fake)
     f.close()
@@ -979,23 +1073,38 @@ if __name__ == "__main__":
     """
     for i in range(1, 5):
         try:
-            fetch_new_without_thr_top(sql="  counter  > 100  group by appid", fake=True )  
+            fetch_new_without_thr_top(sql="  counter  > 1000  group by appid", fake=True )  
             break
         except :
             continue
     """
-    #fetch_new_without_thr_top(sql=" counter > 300  group by appid", fake=True )  
-    #fetchfakeapp(sql="")
+    
+    fetchedone(382201985) #548608066fe
+    
+    #fetch_new_without_thr_top(sql=" counter > 100  group by appid", fake=True ) 
+    fetch_new_without_thr(sql="counter >= 100  and fetched != 1 ", fake=True)
+    for i in range(1, 5):
+        try:
+            #fetch_new_without_thr(sql="fetched = 1 and counter >= 500  ", fake=True)
+            break
+        except :
+            continue 
+     
+     
+    """
+    fetch = FetchComment()
+    fetch.create_tables()
+    """  
+    """
+
+    
     #fetch_new_without_thr(sql="counter < 2000  and counter > 500 ", fake=False)
     #fetch_new_without_thr(sql="category = 6014", fake=True) # 抓取游戏分类下的评论
     #fetch_new_without_thr(sql="category = 6015", fake=True)
-    #fetchedone(281796108) #548608066fe
-    #insertcommentsql = """insert ignore into comment(appid, userid, name, updated, title, rating, version, votesum, votecount, content) 
-    #                   values (%s, %s, "%s",%s, "%s",  %s,%s,%s,%s,%s)"""
-    """
+      
     f = FetchJob()
     ark={'userid':1234567, 
-          'name':'zhangjiwei', 
+          'name':'zhangjiwei', 00
           'updated':'2017-12-29 12:34:56', 
           'title':'test', 
           'rating':5, 
@@ -1003,6 +1112,9 @@ if __name__ == "__main__":
           'voteSum':10, 
           'voteCount':23, 'content':'this is test'}
     f.insert_comment_tb_tmp(281796108, **ark)
+
+
+
     """
     #f.create_newappleuser_tb()
     #f.insert_fakeapp(342994828, '腾讯斗地主') 
@@ -1011,3 +1123,4 @@ if __name__ == "__main__":
     #readlog()
     #fetchall(  num=50)
     
+ 

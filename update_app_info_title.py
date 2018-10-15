@@ -32,7 +32,8 @@ class FetchAppinfo(SpiderRun):
         app = self.cursor.fetchone()
         if app:
             if app[1] !=  title.strip():
-                # 插入apptitle表
+                # 插入apptitle表 
+                print(title) 
                 self.insert_title(appid=app[0], title=title, version=version)
             else:
                 print(app[0], '................................')
@@ -70,12 +71,15 @@ class FetchAppinfo(SpiderRun):
         self.cursor.execute(sql, (appid, title, today, version) )
         self.db.commit()
 
-    def update_appin(self, appid ): 
+    def update_appin(self, appid, apptitle = False ): 
         """
         app的title和version更新完毕后，需要更新appinfo表，表示本次更新完毕
         """ 
-        
-        sql = "update  appinfo set clean = 1 where id = " + str(appid)
+        if apptitle:
+            # 插入新title
+            sql = """update  appinfo set clean = 1, title = "{0}" where id = {1}""" .format(apptitle, appid)
+        else:
+            sql = "update  appinfo set clean = 1 where id = " + str(appid)
         
         self.cursor.execute(sql)
         self.db.commit()
@@ -103,7 +107,7 @@ class FetchAppinfo(SpiderRun):
 @timelog
 def run():
     f = FetchAppinfo()
-    apps = f.get_apps(sql='clean = 0 and url is not null', limit = 2000)
+    apps = f.get_apps(sql='clean = 0 and url is not null', limit = 2)
     #apps = f.get_apps(sql='id in (385285922, 609834058, 893944982, 724816878, 388882339, 448165862, 457856023, 480079300, 480111612,  486717857, 504533353, 510289916, 529096064, 554594787, 583446403 )', limit = 2000)
     for app in apps:
         url = app[1]
